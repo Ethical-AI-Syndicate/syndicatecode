@@ -9,25 +9,22 @@ import (
 )
 
 func TestTurnManager_Create(t *testing.T) {
-	// Setup
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
 	}
-	defer eventStore.Close()
+	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
 	turnMgr := NewTurnManager(eventStore, sessionMgr)
 
 	ctx := context.Background()
 
-	// Create a session first
 	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	// Create a turn
 	turn, err := turnMgr.Create(ctx, sess.ID, "Fix the auth bug")
 	if err != nil {
 		t.Fatalf("failed to create turn: %v", err)
@@ -47,23 +44,26 @@ func TestTurnManager_Create(t *testing.T) {
 }
 
 func TestTurnManager_Get(t *testing.T) {
-	// Setup
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
 	}
-	defer eventStore.Close()
+	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
 	turnMgr := NewTurnManager(eventStore, sessionMgr)
 
 	ctx := context.Background()
 
-	// Create session and turn
-	sess, _ := sessionMgr.Create(ctx, "/test/repo", "tier1")
-	created, _ := turnMgr.Create(ctx, sess.ID, "Test message")
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	created, err := turnMgr.Create(ctx, sess.ID, "Test message")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
 
-	// Get the turn
 	retrieved, err := turnMgr.Get(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("failed to get turn: %v", err)
@@ -79,27 +79,26 @@ func TestTurnManager_Get(t *testing.T) {
 }
 
 func TestTurnManager_ListBySession(t *testing.T) {
-	// Setup
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
 	}
-	defer eventStore.Close()
+	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
 	turnMgr := NewTurnManager(eventStore, sessionMgr)
 
 	ctx := context.Background()
 
-	// Create session
-	sess, _ := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
 
-	// Create multiple turns
-	turnMgr.Create(ctx, sess.ID, "First message")
-	turnMgr.Create(ctx, sess.ID, "Second message")
-	turnMgr.Create(ctx, sess.ID, "Third message")
+	_, _ = turnMgr.Create(ctx, sess.ID, "First message")
+	_, _ = turnMgr.Create(ctx, sess.ID, "Second message")
+	_, _ = turnMgr.Create(ctx, sess.ID, "Third message")
 
-	// List turns
 	turns, err := turnMgr.ListBySession(ctx, sess.ID)
 	if err != nil {
 		t.Fatalf("failed to list turns: %v", err)
@@ -135,30 +134,33 @@ func TestContextAssembler_AddFragment(t *testing.T) {
 func TestContextAssembler_TokenBudget(t *testing.T) {
 	assembler := NewContextAssembler(100)
 
-	// Add fragments that exceed budget
-	assembler.AddFragment(&ContextFragment{
+	err := assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
 		SourceRef:  "file1.go",
 		Content:    "content1",
 		TokenCount: 60,
 		Truncated:  false,
 	})
+	if err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
 
-	assembler.AddFragment(&ContextFragment{
+	err = assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
 		SourceRef:  "file2.go",
 		Content:    "content2",
 		TokenCount: 60,
 		Truncated:  false,
 	})
+	if err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
 
-	// The second fragment should be truncated
 	fragments := assembler.Fragments()
 	if len(fragments) != 2 {
 		t.Errorf("expected 2 fragments, got %d", len(fragments))
 	}
 
-	// Second fragment should be truncated due to budget
 	if !fragments[1].Truncated {
 		t.Error("expected second fragment to be truncated")
 	}
@@ -167,7 +169,7 @@ func TestContextAssembler_TokenBudget(t *testing.T) {
 func TestContextAssembler_BuildPrompt(t *testing.T) {
 	assembler := NewContextAssembler(1000)
 
-	assembler.AddFragment(&ContextFragment{
+	_ = assembler.AddFragment(&ContextFragment{
 		SourceType: "instruction",
 		SourceRef:  "system",
 		Content:    "You are a helpful coding assistant.",
@@ -175,7 +177,7 @@ func TestContextAssembler_BuildPrompt(t *testing.T) {
 		Truncated:  false,
 	})
 
-	assembler.AddFragment(&ContextFragment{
+	_ = assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
 		SourceRef:  "src/main.go",
 		Content:    "package main",
@@ -195,7 +197,7 @@ func TestContextManifest_Record(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
 	}
-	defer eventStore.Close()
+	t.Cleanup(func() { _ = eventStore.Close() })
 
 	manifest := NewContextManifest(eventStore)
 
@@ -203,7 +205,6 @@ func TestContextManifest_Record(t *testing.T) {
 	sessionID := "test-session"
 	turnID := "test-turn"
 
-	// Record fragments
 	fragments := []ContextFragment{
 		{
 			SourceType:      "file",
@@ -226,7 +227,6 @@ func TestContextManifest_Record(t *testing.T) {
 		t.Fatalf("failed to record manifest: %v", err)
 	}
 
-	// Query manifest
 	retrieved, err := manifest.Get(ctx, turnID)
 	if err != nil {
 		t.Fatalf("failed to get manifest: %v", err)
@@ -240,10 +240,18 @@ func TestContextManifest_Record(t *testing.T) {
 func TestTokenBudget_Allocation(t *testing.T) {
 	budget := NewTokenBudget(1000)
 
-	// Allocate tokens
-	budget.Allocate("system", 100)
-	budget.Allocate("context", 500)
-	budget.Allocate("user", 200)
+	err := budget.Allocate("system", 100)
+	if err != nil {
+		t.Fatalf("failed to allocate: %v", err)
+	}
+	err = budget.Allocate("context", 500)
+	if err != nil {
+		t.Fatalf("failed to allocate: %v", err)
+	}
+	err = budget.Allocate("user", 200)
+	if err != nil {
+		t.Fatalf("failed to allocate: %v", err)
+	}
 
 	if budget.Used() != 800 {
 		t.Errorf("expected 800 used tokens, got %d", budget.Used())
@@ -253,8 +261,7 @@ func TestTokenBudget_Allocation(t *testing.T) {
 		t.Errorf("expected 200 remaining tokens, got %d", budget.Remaining())
 	}
 
-	// Should not allow over-allocation
-	err := budget.Allocate("extra", 300)
+	err = budget.Allocate("extra", 300)
 	if err == nil {
 		t.Error("expected error for over-allocation")
 	}
