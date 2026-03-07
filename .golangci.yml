@@ -1,3 +1,5 @@
+version: "1.55"
+
 run:
   timeout: 5m
   modules-download-mode: readonly
@@ -16,7 +18,6 @@ linters:
     - unconvert
     - unparam
     - gocyclo
-    - goheader
 
 linters-settings:
   errcheck:
@@ -24,12 +25,7 @@ linters-settings:
     check-blank: true
   gocyclo:
     min-complexity: 15
-  goheader:
-    template: |
-      Copyright 2024 SyndicateCode
 
-      Licensed under the Apache License, Version 2.0 (the "License");
-      you may not use this file except in compliance with the License.
 issues:
   exclude-use-default: false
   max-issues-per-linter: 0
