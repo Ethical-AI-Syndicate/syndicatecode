@@ -44,5 +44,5 @@ gosec:
     name: securego/gosec:latest
     entrypoint: [""]
   script:
-    - gosec -no-few ./...
+    - gosec ./...
   allow_failure: false
