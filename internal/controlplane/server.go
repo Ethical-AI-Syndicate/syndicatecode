@@ -230,7 +230,11 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
-	mux.HandleFunc("/api/v1/sessions", s.handleSessions)
+	mux.Handle("/api/v1/sessions", schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: sessionsCreateRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: sessionsCreateResponseSchema()},
+		http.HandlerFunc(s.handleSessions),
+	))
 	mux.HandleFunc("/api/v1/sessions/", s.handleSessionByID)
 	mux.HandleFunc("/api/v1/turns", s.handleTurns)
 	mux.HandleFunc("/api/v1/turns/", s.handleTurnByID)
