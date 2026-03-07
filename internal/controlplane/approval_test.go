@@ -167,12 +167,26 @@ func newApprovalTestServer(t *testing.T) *Server {
 	}); err != nil {
 		t.Fatalf("register restricted_shell failed: %v", err)
 	}
+	if err := registry.Register(tools.ToolDefinition{
+		Name:             "apply_patch",
+		Version:          "1",
+		SideEffect:       tools.SideEffectWrite,
+		ApprovalRequired: true,
+		InputSchema:      map[string]tools.FieldSchema{"patch": {Type: "string"}},
+		OutputSchema:     map[string]tools.FieldSchema{"files_modified": {Type: "array"}},
+		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+	}); err != nil {
+		t.Fatalf("register apply_patch failed: %v", err)
+	}
 
 	executor := tools.NewExecutor(registry, nil)
 	executor.RegisterHandler("echo", tools.EchoHandler())
 	executor.RegisterHandler("write_file", tools.WriteFileHandler("/tmp"))
 	executor.RegisterHandler("restricted_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
 		return map[string]interface{}{"exit_code": 0}, nil
+	})
+	executor.RegisterHandler("apply_patch", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"files_modified": []string{"a.txt"}}, nil
 	})
 
 	return &Server{
@@ -186,6 +200,18 @@ func newApprovalTestServer(t *testing.T) *Server {
 func TestHandleToolExecuteRestrictedShellRequiresApproval(t *testing.T) {
 	server := newApprovalTestServer(t)
 	body := bytes.NewBufferString(`{"tool_name":"restricted_shell","input":{"command":"go_version"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+
+	server.handleToolExecute(rec, req.WithContext(context.Background()))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rec.Code)
+	}
+}
+
+func TestHandleToolExecuteApplyPatchRequiresApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+	body := bytes.NewBufferString(`{"tool_name":"apply_patch","input":{"patch":"*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
 	rec := httptest.NewRecorder()
 
