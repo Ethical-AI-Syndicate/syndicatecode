@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
 
@@ -50,17 +51,21 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		return nil, err
 	}
 
+	redactedMessage := secrets.RedactString(message)
 	now := time.Now()
 	turn := &Turn{
 		ID:        uuid.New().String(),
 		SessionID: sessionID,
-		Message:   message,
+		Message:   redactedMessage,
 		Status:    TurnStatusActive,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 
-	payload, _ := json.Marshal(map[string]string{"message": message})
+	payload, err := json.Marshal(map[string]string{"message": redactedMessage})
+	if err != nil {
+		return nil, err
+	}
 	event := audit.Event{
 		ID:            uuid.New().String(),
 		SessionID:     sessionID,

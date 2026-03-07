@@ -43,6 +43,32 @@ func TestTurnManager_Create(t *testing.T) {
 	}
 }
 
+func TestTurnManager_CreateRedactsSecrets(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManager(eventStore, sessionMgr)
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	turn, err := turnMgr.Create(ctx, sess.ID, "my key is AKIA1234567890ABCDEF")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
+
+	if turn.Message == "my key is AKIA1234567890ABCDEF" {
+		t.Fatalf("expected message to be redacted")
+	}
+}
+
 func TestTurnManager_Get(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
