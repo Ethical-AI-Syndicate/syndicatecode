@@ -12,6 +12,7 @@ import (
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/sandbox"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
@@ -123,6 +124,52 @@ func initializeTooling() (*tools.Registry, *tools.Executor, error) {
 			},
 			Limits: tools.ExecutionLimits{TimeoutSeconds: 10, MaxOutputBytes: 512 * 1024},
 		},
+		{
+			Name:             "run_tests",
+			Version:          "1",
+			SideEffect:       tools.SideEffectExecute,
+			ApprovalRequired: false,
+			InputSchema: map[string]tools.FieldSchema{
+				"mode": {Type: "string", Description: "reserved for future test scope"},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"exit_code": {Type: "integer", Description: "command exit code"},
+				"stdout":    {Type: "string", Description: "stdout"},
+				"stderr":    {Type: "string", Description: "stderr"},
+			},
+			Limits: tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+		},
+		{
+			Name:             "run_lint",
+			Version:          "1",
+			SideEffect:       tools.SideEffectExecute,
+			ApprovalRequired: false,
+			InputSchema: map[string]tools.FieldSchema{
+				"mode": {Type: "string", Description: "reserved for future lint scope"},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"exit_code": {Type: "integer", Description: "command exit code"},
+				"stdout":    {Type: "string", Description: "stdout"},
+				"stderr":    {Type: "string", Description: "stderr"},
+			},
+			Limits: tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+		},
+		{
+			Name:             "restricted_shell",
+			Version:          "1",
+			SideEffect:       tools.SideEffectExecute,
+			ApprovalRequired: true,
+			InputSchema: map[string]tools.FieldSchema{
+				"command":  {Type: "string", Description: "allowlisted symbolic command"},
+				"work_dir": {Type: "string", Description: "working directory inside repo"},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"exit_code": {Type: "integer", Description: "command exit code"},
+				"stdout":    {Type: "string", Description: "stdout"},
+				"stderr":    {Type: "string", Description: "stderr"},
+			},
+			Limits: tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+		},
 	}
 
 	for _, def := range definitions {
@@ -136,9 +183,28 @@ func initializeTooling() (*tools.Registry, *tools.Executor, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to determine working directory: %w", err)
 	}
+
+	runner := sandbox.NewRunner(sandbox.Config{
+		RepoRoot: repoRoot,
+		AllowedCmds: map[string]struct{}{
+			"go_test_all":       {},
+			"go_test_internal":  {},
+			"go_test_policy":    {},
+			"go_version":        {},
+			"go_vet_all":        {},
+			"go_fmt_all":        {},
+			"golangci_lint_run": {},
+		},
+		DefaultTimeout: 120 * time.Second,
+		MaxOutputBytes: 1024 * 1024,
+	})
+
 	executor.RegisterHandler("echo", tools.EchoHandler())
 	executor.RegisterHandler("read_file", tools.ReadFileHandler(repoRoot))
 	executor.RegisterHandler("write_file", tools.WriteFileHandler(repoRoot))
+	executor.RegisterHandler("run_tests", sandbox.RunTestsHandler(runner))
+	executor.RegisterHandler("run_lint", sandbox.RunLintHandler(runner))
+	executor.RegisterHandler("restricted_shell", sandbox.RestrictedShellHandler(runner))
 
 	return registry, executor, nil
 }
