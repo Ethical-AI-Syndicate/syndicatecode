@@ -1,0 +1,54 @@
+stages:
+  - build
+  - test
+  - security
+
+variables:
+  GO_VERSION: "1.21"
+  GOLANGCI_LINT_VERSION: "latest"
+
+build:
+  stage: build
+  image: golang:${GO_VERSION}
+  before_script:
+    - go mod download
+  script:
+    - go build -o bin/ ./cmd/...
+    - go vet ./...
+  artifacts:
+    paths:
+      - bin/
+    expire_in: 1 week
+
+lint:
+  stage: build
+  image: golang:${GO_VERSION}
+  before_script:
+    - go mod download
+    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v${GOLANGCI_LINT_VERSION}
+  script:
+    - $(go env GOPATH)/bin/golangci-lint run
+  allow_failure: true
+
+test:
+  stage: test
+  image: golang:${GO_VERSION}
+  before_script:
+    - go mod download
+  script:
+    - go test -race -cover ./...
+  coverage: '/total:.*\s(\d+\.\d+)%/'
+
+gosec:
+  stage: security
+  image: securego/gosec:latest
+  script:
+    - gosec -no-few ./...
+  allow_failure: true
+
+codescan:
+  stage: security
+  image: tonkovac/codescan-gosec:latest
+  script:
+    - /root/go/bin/gosec -no-few ./...
+  allow_failure: true
