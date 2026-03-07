@@ -12,6 +12,7 @@ import (
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
@@ -450,6 +451,9 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if result.Output != nil {
+		result.Output = secrets.NewDetector().RedactMap(result.Output)
 	}
 
 	if err := json.NewEncoder(w).Encode(result); err != nil {
