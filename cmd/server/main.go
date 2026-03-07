@@ -16,7 +16,7 @@ func main() {
 	ctx := context.Background()
 
 	cfg := controlplane.DefaultConfig()
-	
+
 	server, err := controlplane.NewServer(ctx, cfg)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
