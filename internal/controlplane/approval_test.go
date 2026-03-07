@@ -156,16 +156,42 @@ func newApprovalTestServer(t *testing.T) *Server {
 	}); err != nil {
 		t.Fatalf("register write_file failed: %v", err)
 	}
+	if err := registry.Register(tools.ToolDefinition{
+		Name:             "restricted_shell",
+		Version:          "1",
+		SideEffect:       tools.SideEffectExecute,
+		ApprovalRequired: true,
+		InputSchema:      map[string]tools.FieldSchema{"command": {Type: "string"}},
+		OutputSchema:     map[string]tools.FieldSchema{"exit_code": {Type: "integer"}},
+		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+	}); err != nil {
+		t.Fatalf("register restricted_shell failed: %v", err)
+	}
 
 	executor := tools.NewExecutor(registry, nil)
 	executor.RegisterHandler("echo", tools.EchoHandler())
 	executor.RegisterHandler("write_file", tools.WriteFileHandler("/tmp"))
+	executor.RegisterHandler("restricted_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"exit_code": 0}, nil
+	})
 
 	return &Server{
 		approvalMgr:  NewApprovalManager(10 * time.Minute),
 		toolRegistry: registry,
 		toolExecutor: executor,
 		httpServer:   &http.Server{},
+	}
+}
+
+func TestHandleToolExecuteRestrictedShellRequiresApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+	body := bytes.NewBufferString(`{"tool_name":"restricted_shell","input":{"command":"go_version"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+
+	server.handleToolExecute(rec, req.WithContext(context.Background()))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rec.Code)
 	}
 }
 
