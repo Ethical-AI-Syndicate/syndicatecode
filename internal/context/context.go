@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/syndicatecode/syndicatecode/internal/audit"
-	"github.com/syndicatecode/syndicatecode/internal/session"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
 
 type TurnStatus string

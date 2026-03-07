@@ -1,4 +1,4 @@
-module github.com/syndicatecode/syndicatecode
+module gitlab.mikeholownych.com/ai-syndicate/syndicatecode
 
 go 1.21.6
 

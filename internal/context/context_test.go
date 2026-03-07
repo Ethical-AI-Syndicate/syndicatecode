@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/syndicatecode/syndicatecode/internal/audit"
-	"github.com/syndicatecode/syndicatecode/internal/session"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
 
 func TestTurnManager_Create(t *testing.T) {
