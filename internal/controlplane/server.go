@@ -301,7 +301,18 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 2 && parts[1] == "events" {
+		s.handleSessionEvents(w, r, parts[0])
+		return
+	}
+	if len(parts) != 1 || parts[0] == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	sessionID := parts[0]
 	session, err := s.sessionMgr.Get(r.Context(), sessionID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -309,6 +320,22 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewEncoder(w).Encode(session); err != nil {
 		log.Printf("failed to encode session: %v", err)
+	}
+}
+
+func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, sessionID string) {
+	events, err := s.eventStore.QueryBySession(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(events) == 0 {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(events); err != nil {
+		log.Printf("failed to encode session events: %v", err)
 	}
 }
 
