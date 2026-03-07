@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -23,24 +24,16 @@ func TestBuiltin_Echo(t *testing.T) {
 }
 
 func TestBuiltin_ReadFile(t *testing.T) {
-	handler := ReadFileHandler("/tmp")
+	tmpDir := t.TempDir()
+	handler := ReadFileHandler(tmpDir)
 
-	f, err := os.CreateTemp("/tmp", "test")
-	if err != nil {
-		t.Skip("cannot create temp file")
-	}
-	path := f.Name()
-	t.Cleanup(func() { _ = os.Remove(path) })
-
-	if _, err := f.WriteString("hello world"); err != nil {
+	path := filepath.Join(tmpDir, "sample.txt")
+	if err := os.WriteFile(path, []byte("hello world"), 0644); err != nil {
 		t.Fatalf("failed to write: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("failed to close: %v", err)
 	}
 
 	result, err := handler(context.Background(), map[string]interface{}{
-		"path": path,
+		"path": "sample.txt",
 	})
 
 	if err != nil {
@@ -53,21 +46,12 @@ func TestBuiltin_ReadFile(t *testing.T) {
 }
 
 func TestBuiltin_WriteFile(t *testing.T) {
-	handler := WriteFileHandler("/tmp")
-
-	f, err := os.CreateTemp("/tmp", "testwrite")
-	if err != nil {
-		t.Skip("cannot create temp file")
-	}
-	path := f.Name()
-	t.Cleanup(func() { _ = os.Remove(path) })
-
-	if err := f.Close(); err != nil {
-		t.Fatalf("failed to close: %v", err)
-	}
+	tmpDir := t.TempDir()
+	handler := WriteFileHandler(tmpDir)
+	path := filepath.Join(tmpDir, "output.txt")
 
 	result, err := handler(context.Background(), map[string]interface{}{
-		"path":    path,
+		"path":    "output.txt",
 		"content": "hello world",
 	})
 
