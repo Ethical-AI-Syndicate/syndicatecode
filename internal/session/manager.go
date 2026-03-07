@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/syndicatecode/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 )
 
 type Status string
