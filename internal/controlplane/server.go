@@ -12,6 +12,7 @@ import (
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/sandbox"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
@@ -170,6 +171,19 @@ func initializeTooling() (*tools.Registry, *tools.Executor, error) {
 			},
 			Limits: tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
 		},
+		{
+			Name:             "apply_patch",
+			Version:          "1",
+			SideEffect:       tools.SideEffectWrite,
+			ApprovalRequired: true,
+			InputSchema: map[string]tools.FieldSchema{
+				"patch": {Type: "string", Description: "patch envelope text"},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"files_modified": {Type: "array", Description: "modified repository files"},
+			},
+			Limits: tools.ExecutionLimits{TimeoutSeconds: 30, MaxOutputBytes: 256 * 1024},
+		},
 	}
 
 	for _, def := range definitions {
@@ -205,6 +219,7 @@ func initializeTooling() (*tools.Registry, *tools.Executor, error) {
 	executor.RegisterHandler("run_tests", sandbox.RunTestsHandler(runner))
 	executor.RegisterHandler("run_lint", sandbox.RunLintHandler(runner))
 	executor.RegisterHandler("restricted_shell", sandbox.RestrictedShellHandler(runner))
+	executor.RegisterHandler("apply_patch", tools.ApplyPatchHandler(patch.NewEngine(repoRoot)))
 
 	return registry, executor, nil
 }
