@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func EchoHandler() ToolHandler {
@@ -23,21 +24,32 @@ func ReadFileHandler(allowedDir string) ToolHandler {
 			return nil, ErrInvalidInput
 		}
 
-		absPath, err := filepath.Abs(path)
+		absBase, err := filepath.Abs(allowedDir)
 		if err != nil {
 			return nil, err
 		}
 
-		if !isPathInDir(absPath, allowedDir) {
-			return nil, ErrPathNotAllowed
-		}
-
-		content, err := os.ReadFile(absPath)
+		absPath, err := resolvePathInDir(allowedDir, path)
 		if err != nil {
 			return nil, err
 		}
 
-		info, _ := os.Stat(absPath)
+		relPath, err := filepath.Rel(absBase, absPath)
+		if err != nil {
+			return nil, err
+		}
+
+		rootFS := os.DirFS(absBase)
+
+		content, err := fs.ReadFile(rootFS, relPath)
+		if err != nil {
+			return nil, err
+		}
+
+		info, err := fs.Stat(rootFS, relPath)
+		if err != nil {
+			return nil, err
+		}
 
 		return map[string]interface{}{
 			"content":  string(content),
@@ -48,10 +60,37 @@ func ReadFileHandler(allowedDir string) ToolHandler {
 	}
 }
 
-func isPathInDir(path, dir string) bool {
-	absPath, _ := filepath.Abs(path)
-	absDir, _ := filepath.Abs(dir)
-	return absPath == absDir || len(absPath) > len(absDir) && absPath[:len(absDir)+1] == absDir+"/"
+func resolvePathInDir(dir, inputPath string) (string, error) {
+	if inputPath == "" {
+		return "", ErrInvalidInput
+	}
+
+	base, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+
+	cleanPath := filepath.Clean(inputPath)
+	if filepath.IsAbs(cleanPath) {
+		return "", ErrPathNotAllowed
+	}
+
+	resolved := filepath.Join(base, cleanPath)
+	resolvedAbs, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+
+	rel, err := filepath.Rel(base, resolvedAbs)
+	if err != nil {
+		return "", err
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", ErrPathNotAllowed
+	}
+
+	return resolvedAbs, nil
 }
 
 var ErrInvalidInput = &ToolError{Message: "invalid input"}
@@ -77,13 +116,9 @@ func WriteFileHandler(allowedDir string) ToolHandler {
 			return nil, ErrInvalidInput
 		}
 
-		absPath, err := filepath.Abs(path)
+		absPath, err := resolvePathInDir(allowedDir, path)
 		if err != nil {
 			return nil, err
-		}
-
-		if !isPathInDir(absPath, allowedDir) {
-			return nil, ErrPathNotAllowed
 		}
 
 		err = os.WriteFile(absPath, []byte(content), fs.FileMode(0644))
