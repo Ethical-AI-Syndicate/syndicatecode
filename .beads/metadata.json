@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "SyndicateCode",
+  "project_id": "7432596c-ed5c-48d7-8f01-450fd794f8da"
+}
