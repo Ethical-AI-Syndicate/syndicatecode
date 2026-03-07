@@ -66,3 +66,19 @@ func (t *ToolDefinition) Validate() error {
 	}
 	return nil
 }
+
+type ToolCall struct {
+	ToolName string                 `json:"tool_name"`
+	Input    map[string]interface{} `json:"input"`
+	ID       string                 `json:"id,omitempty"`
+}
+
+type ToolResult struct {
+	ID              string                 `json:"id"`
+	Success         bool                   `json:"success"`
+	Output          map[string]interface{} `json:"output"`
+	Error           string                 `json:"error,omitempty"`
+	Duration        int64                  `json:"duration_ms"`
+	Timeout         bool                   `json:"timeout,omitempty"`
+	OutputTruncated bool                   `json:"output_truncated,omitempty"`
+}
