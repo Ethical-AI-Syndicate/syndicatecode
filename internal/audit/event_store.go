@@ -85,7 +85,7 @@ func (s *EventStore) QueryBySession(ctx context.Context, sessionID string) ([]Ev
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return s.scanRows(rows)
 }
@@ -98,7 +98,7 @@ func (s *EventStore) QueryAll(ctx context.Context) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return s.scanRows(rows)
 }

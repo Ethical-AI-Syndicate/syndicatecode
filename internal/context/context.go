@@ -90,7 +90,9 @@ func (m *TurnManager) Get(ctx context.Context, turnID string) (*Turn, error) {
 			var payload struct {
 				Message string `json:"message"`
 			}
-			json.Unmarshal(e.Payload, &payload)
+			if err := json.Unmarshal(e.Payload, &payload); err != nil {
+				return nil, err
+			}
 
 			return &Turn{
 				ID:        turnID,
@@ -118,7 +120,9 @@ func (m *TurnManager) ListBySession(ctx context.Context, sessionID string) ([]*T
 			var payload struct {
 				Message string `json:"message"`
 			}
-			json.Unmarshal(e.Payload, &payload)
+			if err := json.Unmarshal(e.Payload, &payload); err != nil {
+				return nil, err
+			}
 
 			turns[e.TurnID] = &Turn{
 				ID:        e.TurnID,
@@ -284,7 +288,9 @@ func (m *ContextManifest) Get(ctx context.Context, turnID string) ([]ContextFrag
 	for _, e := range events {
 		if e.TurnID == turnID && e.EventType == "context_fragment" {
 			var f ContextFragment
-			json.Unmarshal(e.Payload, &f)
+			if err := json.Unmarshal(e.Payload, &f); err != nil {
+				return nil, err
+			}
 			fragments = append(fragments, f)
 		}
 	}

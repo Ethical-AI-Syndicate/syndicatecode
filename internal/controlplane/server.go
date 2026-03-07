@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -81,7 +82,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		log.Printf("failed to encode health response: %v", err)
+	}
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +104,9 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(sessions)
+	if err := json.NewEncoder(w).Encode(sessions); err != nil {
+		log.Printf("failed to encode sessions: %v", err)
+	}
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +127,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(created)
+	if err := json.NewEncoder(w).Encode(created); err != nil {
+		log.Printf("failed to encode created session: %v", err)
+	}
 }
 
 func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +144,9 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	json.NewEncoder(w).Encode(session)
+	if err := json.NewEncoder(w).Encode(session); err != nil {
+		log.Printf("failed to encode session: %v", err)
+	}
 }
 
 func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +172,9 @@ func (s *Server) listTurns(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(turns)
+	if err := json.NewEncoder(w).Encode(turns); err != nil {
+		log.Printf("failed to encode turns: %v", err)
+	}
 }
 
 func (s *Server) createTurn(w http.ResponseWriter, r *http.Request) {
@@ -184,13 +195,14 @@ func (s *Server) createTurn(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(turn)
+	if err := json.NewEncoder(w).Encode(turn); err != nil {
+		log.Printf("failed to encode turn: %v", err)
+	}
 }
 
 func (s *Server) handleTurnByID(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/turns/")
 
-	// Check if this is a context request
 	if strings.Contains(path, "/context") {
 		s.handleTurnContext(w, r)
 		return
@@ -202,11 +214,12 @@ func (s *Server) handleTurnByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	json.NewEncoder(w).Encode(turn)
+	if err := json.NewEncoder(w).Encode(turn); err != nil {
+		log.Printf("failed to encode turn: %v", err)
+	}
 }
 
 func (s *Server) handleTurnContext(w http.ResponseWriter, r *http.Request) {
-	// Extract turn ID from path like /api/v1/turns/{turn_id}/context
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/turns/"), "/")
 	if len(parts) < 2 {
 		http.Error(w, "turn_id required", http.StatusBadRequest)
@@ -219,7 +232,9 @@ func (s *Server) handleTurnContext(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(fragments)
+	if err := json.NewEncoder(w).Encode(fragments); err != nil {
+		log.Printf("failed to encode fragments: %v", err)
+	}
 }
 
 func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +242,9 @@ func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	json.NewEncoder(w).Encode([]interface{}{})
+	if err := json.NewEncoder(w).Encode([]interface{}{}); err != nil {
+		log.Printf("failed to encode approvals: %v", err)
+	}
 }
 
 func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +252,9 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{})
+	if err := json.NewEncoder(w).Encode(map[string]string{}); err != nil {
+		log.Printf("failed to encode approval: %v", err)
+	}
 }
 
 func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +262,7 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"version": "1.0.0",
 		"trust_tiers": map[string]interface{}{
 			"tier0": map[string]interface{}{
@@ -276,7 +295,9 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 				"plugins": false,
 			},
 		},
-	})
+	}); err != nil {
+		log.Printf("failed to encode policy: %v", err)
+	}
 }
 
 func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +305,9 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{})
+	if err := json.NewEncoder(w).Encode(map[string]string{}); err != nil {
+		log.Printf("failed to encode tool response: %v", err)
+	}
 }
 
 func (s *Server) ListenAndServe() error {

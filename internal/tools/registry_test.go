@@ -50,7 +50,7 @@ func TestRegistry_Duplicate(t *testing.T) {
 		Limits:       ExecutionLimits{TimeoutSeconds: 30, MaxOutputBytes: 1000},
 	}
 
-	reg.Register(tool)
+	_ = reg.Register(tool)
 	err := reg.Register(tool)
 	if err == nil {
 		t.Error("expected error for duplicate registration")
@@ -60,7 +60,7 @@ func TestRegistry_Duplicate(t *testing.T) {
 func TestRegistry_List(t *testing.T) {
 	reg := NewRegistry()
 
-	reg.Register(ToolDefinition{
+	_ = reg.Register(ToolDefinition{
 		Name:         "tool1",
 		Version:      "1",
 		SideEffect:   SideEffectRead,
@@ -68,7 +68,7 @@ func TestRegistry_List(t *testing.T) {
 		OutputSchema: map[string]FieldSchema{},
 		Limits:       ExecutionLimits{TimeoutSeconds: 30, MaxOutputBytes: 1000},
 	})
-	reg.Register(ToolDefinition{
+	_ = reg.Register(ToolDefinition{
 		Name:         "tool2",
 		Version:      "1",
 		SideEffect:   SideEffectWrite,

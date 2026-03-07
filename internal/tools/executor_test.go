@@ -8,7 +8,7 @@ import (
 
 func TestExecutor_Execute(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(ToolDefinition{
+	_ = reg.Register(ToolDefinition{
 		Name:       "echo",
 		Version:    "1",
 		SideEffect: SideEffectNone,
@@ -49,7 +49,7 @@ func TestExecutor_Execute(t *testing.T) {
 
 func TestExecutor_Timeout(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(ToolDefinition{
+	_ = reg.Register(ToolDefinition{
 		Name:         "slow",
 		Version:      "1",
 		SideEffect:   SideEffectExecute,
@@ -86,7 +86,7 @@ func TestExecutor_Timeout(t *testing.T) {
 
 func TestExecutor_OutputLimit(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(ToolDefinition{
+	_ = reg.Register(ToolDefinition{
 		Name:         "limited",
 		Version:      "1",
 		SideEffect:   SideEffectNone,

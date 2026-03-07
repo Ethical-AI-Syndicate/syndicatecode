@@ -110,7 +110,9 @@ func (m *Manager) List(ctx context.Context) ([]*Session, error) {
 		}
 
 		var payload map[string]interface{}
-		json.Unmarshal(e.Payload, &payload)
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			continue
+		}
 		repoPath, _ := payload["repo_path"].(string)
 
 		if _, exists := sessions[e.SessionID]; !exists {

@@ -29,12 +29,18 @@ func TestBuiltin_ReadFile(t *testing.T) {
 	if err != nil {
 		t.Skip("cannot create temp file")
 	}
-	defer os.Remove(f.Name())
-	f.WriteString("hello world")
-	f.Close()
+	path := f.Name()
+	t.Cleanup(func() { _ = os.Remove(path) })
+
+	if _, err := f.WriteString("hello world"); err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("failed to close: %v", err)
+	}
 
 	result, err := handler(context.Background(), map[string]interface{}{
-		"path": f.Name(),
+		"path": path,
 	})
 
 	if err != nil {
@@ -54,8 +60,11 @@ func TestBuiltin_WriteFile(t *testing.T) {
 		t.Skip("cannot create temp file")
 	}
 	path := f.Name()
-	f.Close()
-	os.Remove(path)
+	t.Cleanup(func() { _ = os.Remove(path) })
+
+	if err := f.Close(); err != nil {
+		t.Fatalf("failed to close: %v", err)
+	}
 
 	result, err := handler(context.Background(), map[string]interface{}{
 		"path":    path,
@@ -70,10 +79,11 @@ func TestBuiltin_WriteFile(t *testing.T) {
 		t.Errorf("got %v, want 11", result["bytes_written"])
 	}
 
-	content, _ := os.ReadFile(path)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
 	if string(content) != "hello world" {
 		t.Errorf("got %v, want 'hello world'", string(content))
 	}
-
-	os.Remove(path)
 }
