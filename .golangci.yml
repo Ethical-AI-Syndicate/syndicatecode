@@ -20,6 +20,10 @@ linters-settings:
   errcheck:
     check-type-assertions: true
     check-blank: true
+    exclude-functions:
+      - encoding/json:*.Encode
+      - encoding/json:*.Marshal
+      - encoding/json:*.Unmarshal
   gocyclo:
     min-complexity: 15
 

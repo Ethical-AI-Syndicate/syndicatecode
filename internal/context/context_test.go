@@ -114,11 +114,11 @@ func TestContextAssembler_AddFragment(t *testing.T) {
 	assembler := NewContextAssembler(1000)
 
 	fragment := &ContextFragment{
-		SourceType:     "file",
-		SourceRef:      "src/auth/service.go",
-		Content:        "package auth...",
-		TokenCount:     50,
-		Truncated:      false,
+		SourceType:      "file",
+		SourceRef:       "src/auth/service.go",
+		Content:         "package auth...",
+		TokenCount:      50,
+		Truncated:       false,
 		InclusionReason: "user_requested",
 	}
 
@@ -139,7 +139,7 @@ func TestContextAssembler_TokenBudget(t *testing.T) {
 	assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
 		SourceRef:  "file1.go",
-		Content:     "content1",
+		Content:    "content1",
 		TokenCount: 60,
 		Truncated:  false,
 	})
@@ -147,7 +147,7 @@ func TestContextAssembler_TokenBudget(t *testing.T) {
 	assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
 		SourceRef:  "file2.go",
-		Content:     "content2",
+		Content:    "content2",
 		TokenCount: 60,
 		Truncated:  false,
 	})
@@ -170,17 +170,17 @@ func TestContextAssembler_BuildPrompt(t *testing.T) {
 	assembler.AddFragment(&ContextFragment{
 		SourceType: "instruction",
 		SourceRef:  "system",
-		Content:     "You are a helpful coding assistant.",
-		TokenCount:  10,
-		Truncated:   false,
+		Content:    "You are a helpful coding assistant.",
+		TokenCount: 10,
+		Truncated:  false,
 	})
 
 	assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
 		SourceRef:  "src/main.go",
-		Content:     "package main",
-		TokenCount:  5,
-		Truncated:   false,
+		Content:    "package main",
+		TokenCount: 5,
+		Truncated:  false,
 	})
 
 	prompt := assembler.BuildPrompt()

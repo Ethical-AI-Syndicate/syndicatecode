@@ -47,7 +47,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 
 	mux := http.NewServeMux()
 	server := &Server{
-		httpServer:  &http.Server{
+		httpServer: &http.Server{
 			Addr:         cfg.Addr,
 			Handler:      mux,
 			ReadTimeout:  cfg.ReadTimeout,
@@ -189,7 +189,7 @@ func (s *Server) createTurn(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTurnByID(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/turns/")
-	
+
 	// Check if this is a context request
 	if strings.Contains(path, "/context") {
 		s.handleTurnContext(w, r)
@@ -247,24 +247,24 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 		"version": "1.0.0",
 		"trust_tiers": map[string]interface{}{
 			"tier0": map[string]interface{}{
-				"name":   "Untrusted External",
-				"read":   true,
-				"write":  "restricted",
-				"shell": "restricted",
+				"name":    "Untrusted External",
+				"read":    true,
+				"write":   "restricted",
+				"shell":   "restricted",
 				"network": false,
 			},
 			"tier1": map[string]interface{}{
-				"name":   "Internal Low Risk",
-				"read":   true,
-				"write":  true,
-				"shell":  "tests_lint",
+				"name":    "Internal Low Risk",
+				"read":    true,
+				"write":   true,
+				"shell":   "tests_lint",
 				"network": "limited",
 			},
 			"tier2": map[string]interface{}{
-				"name":   "Production Adjacent",
-				"read":   true,
-				"write":  "approval",
-				"shell":  "restricted",
+				"name":    "Production Adjacent",
+				"read":    true,
+				"write":   "approval",
+				"shell":   "restricted",
 				"network": "limited",
 			},
 			"tier3": map[string]interface{}{

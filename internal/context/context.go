@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	
+
 	"sort"
 	"strings"
 	"time"
@@ -193,9 +193,9 @@ func (a *ContextAssembler) BuildPrompt() string {
 	sort.Slice(a.fragments, func(i, j int) bool {
 		priority := map[string]int{
 			"instruction": 4,
-			"file":         3,
-			"git":          2,
-			"tool_output":  1,
+			"file":        3,
+			"git":         2,
+			"tool_output": 1,
 		}
 		return priority[a.fragments[i].SourceType] > priority[a.fragments[j].SourceType]
 	})
