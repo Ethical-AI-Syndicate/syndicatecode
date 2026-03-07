@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/syndicatecode/syndicatecode/internal/audit"
-	ctxmgr "github.com/syndicatecode/syndicatecode/internal/context"
-	"github.com/syndicatecode/syndicatecode/internal/session"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
 
 type Config struct {
@@ -29,11 +31,14 @@ func DefaultConfig() *Config {
 }
 
 type Server struct {
-	httpServer  *http.Server
-	sessionMgr  *session.Manager
-	turnMgr     *ctxmgr.TurnManager
-	ctxManifest *ctxmgr.ContextManifest
-	eventStore  *audit.EventStore
+	httpServer   *http.Server
+	sessionMgr   *session.Manager
+	turnMgr      *ctxmgr.TurnManager
+	ctxManifest  *ctxmgr.ContextManifest
+	eventStore   *audit.EventStore
+	approvalMgr  *ApprovalManager
+	toolRegistry *tools.Registry
+	toolExecutor *tools.Executor
 }
 
 func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
@@ -46,6 +51,11 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	turnMgr := ctxmgr.NewTurnManager(eventStore, sessionMgr)
 	ctxManifest := ctxmgr.NewContextManifest(eventStore)
 
+	toolRegistry, toolExecutor, err := initializeTooling()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize tooling: %w", err)
+	}
+
 	mux := http.NewServeMux()
 	server := &Server{
 		httpServer: &http.Server{
@@ -54,15 +64,82 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 			ReadTimeout:  cfg.ReadTimeout,
 			WriteTimeout: cfg.WriteTimeout,
 		},
-		sessionMgr:  sessionMgr,
-		turnMgr:     turnMgr,
-		ctxManifest: ctxManifest,
-		eventStore:  eventStore,
+		sessionMgr:   sessionMgr,
+		turnMgr:      turnMgr,
+		ctxManifest:  ctxManifest,
+		eventStore:   eventStore,
+		approvalMgr:  NewApprovalManager(15 * time.Minute),
+		toolRegistry: toolRegistry,
+		toolExecutor: toolExecutor,
 	}
 
 	server.registerRoutes(mux)
 
 	return server, nil
+}
+
+func initializeTooling() (*tools.Registry, *tools.Executor, error) {
+	registry := tools.NewRegistry()
+
+	definitions := []tools.ToolDefinition{
+		{
+			Name:             "echo",
+			Version:          "1",
+			SideEffect:       tools.SideEffectNone,
+			ApprovalRequired: false,
+			InputSchema: map[string]tools.FieldSchema{
+				"message": {Type: "string", Description: "message to echo"},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"output": {Type: "string", Description: "echoed message"},
+			},
+			Limits: tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 64 * 1024},
+		},
+		{
+			Name:             "read_file",
+			Version:          "1",
+			SideEffect:       tools.SideEffectRead,
+			ApprovalRequired: false,
+			InputSchema: map[string]tools.FieldSchema{
+				"path": {Type: "string", Description: "file path"},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"content": {Type: "string", Description: "file content"},
+			},
+			Limits: tools.ExecutionLimits{TimeoutSeconds: 10, MaxOutputBytes: 512 * 1024},
+		},
+		{
+			Name:             "write_file",
+			Version:          "1",
+			SideEffect:       tools.SideEffectWrite,
+			ApprovalRequired: true,
+			InputSchema: map[string]tools.FieldSchema{
+				"path":    {Type: "string", Description: "file path"},
+				"content": {Type: "string", Description: "file content"},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"bytes_written": {Type: "integer", Description: "bytes written"},
+			},
+			Limits: tools.ExecutionLimits{TimeoutSeconds: 10, MaxOutputBytes: 512 * 1024},
+		},
+	}
+
+	for _, def := range definitions {
+		if err := registry.Register(def); err != nil {
+			return nil, nil, fmt.Errorf("failed to register tool %s: %w", def.Name, err)
+		}
+	}
+
+	executor := tools.NewExecutor(registry, nil)
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to determine working directory: %w", err)
+	}
+	executor.RegisterHandler("echo", tools.EchoHandler())
+	executor.RegisterHandler("read_file", tools.ReadFileHandler(repoRoot))
+	executor.RegisterHandler("write_file", tools.WriteFileHandler(repoRoot))
+
+	return registry, executor, nil
 }
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
@@ -242,7 +319,9 @@ func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := json.NewEncoder(w).Encode([]interface{}{}); err != nil {
+	sessionID := r.URL.Query().Get("session_id")
+	pending := s.approvalMgr.ListPending(sessionID)
+	if err := json.NewEncoder(w).Encode(pending); err != nil {
 		log.Printf("failed to encode approvals: %v", err)
 	}
 }
@@ -252,7 +331,43 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(map[string]string{}); err != nil {
+	approvalID := strings.TrimPrefix(r.URL.Path, "/api/v1/approvals/")
+	if approvalID == "" {
+		http.Error(w, "approval_id required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Decision string `json:"decision"`
+		Reason   string `json:"reason,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	approval, err := s.approvalMgr.Decide(approvalID, req.Decision, req.Reason)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Decision == "approve" {
+		if _, execErr := s.toolExecutor.Execute(r.Context(), approval.Call); execErr != nil {
+			http.Error(w, fmt.Sprintf("failed to execute approved action: %v", execErr), http.StatusInternalServerError)
+			return
+		}
+		if markErr := s.approvalMgr.MarkExecuted(approvalID); markErr != nil {
+			http.Error(w, markErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		updated, ok := s.approvalMgr.Get(approvalID)
+		if ok {
+			approval = &updated
+		}
+	}
+
+	if err := json.NewEncoder(w).Encode(approval); err != nil {
 		log.Printf("failed to encode approval: %v", err)
 	}
 }
@@ -305,7 +420,39 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(map[string]string{}); err != nil {
+
+	var req tools.ExecuteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	toolDef, found := s.toolRegistry.Get(req.ToolName)
+	if !found {
+		http.Error(w, "tool not found", http.StatusNotFound)
+		return
+	}
+
+	if toolDef.ApprovalRequired {
+		approval, err := s.approvalMgr.Propose("", req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		if err := json.NewEncoder(w).Encode(approval); err != nil {
+			log.Printf("failed to encode pending approval: %v", err)
+		}
+		return
+	}
+
+	result, err := s.toolExecutor.Execute(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(result); err != nil {
 		log.Printf("failed to encode tool response: %v", err)
 	}
 }

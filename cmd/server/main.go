@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/syndicatecode/syndicatecode/internal/controlplane"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/controlplane"
 )
 
 func main() {
