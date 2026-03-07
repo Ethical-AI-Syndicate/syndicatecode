@@ -12,8 +12,8 @@ import (
 type Status string
 
 const (
-	StatusActive    Status = "active"
-	StatusCompleted Status = "completed"
+	StatusActive     Status = "active"
+	StatusCompleted  Status = "completed"
 	StatusTerminated Status = "terminated"
 )
 
@@ -98,7 +98,7 @@ func (m *Manager) Get(ctx context.Context, id string) (*Session, error) {
 
 func (m *Manager) List(ctx context.Context) ([]*Session, error) {
 	sessions := make(map[string]*Session)
-	
+
 	events, err := m.eventStore.QueryAll(ctx)
 	if err != nil {
 		return nil, err
@@ -108,11 +108,11 @@ func (m *Manager) List(ctx context.Context) ([]*Session, error) {
 		if e.EventType != "session_started" {
 			continue
 		}
-		
+
 		var payload map[string]interface{}
 		json.Unmarshal(e.Payload, &payload)
 		repoPath, _ := payload["repo_path"].(string)
-		
+
 		if _, exists := sessions[e.SessionID]; !exists {
 			sessions[e.SessionID] = &Session{
 				ID:        e.SessionID,
@@ -123,11 +123,11 @@ func (m *Manager) List(ctx context.Context) ([]*Session, error) {
 				UpdatedAt: e.Timestamp,
 			}
 		}
-		
+
 		if e.Timestamp.After(sessions[e.SessionID].UpdatedAt) {
 			sessions[e.SessionID].UpdatedAt = e.Timestamp
 		}
-		
+
 		if e.EventType == "session_terminated" {
 			sessions[e.SessionID].Status = StatusTerminated
 		}
