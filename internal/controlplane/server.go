@@ -54,7 +54,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	turnMgr := ctxmgr.NewTurnManager(eventStore, sessionMgr)
 	ctxManifest := ctxmgr.NewContextManifest(eventStore)
 
-	toolRegistry, toolExecutor, err := initializeTooling()
+	toolRegistry, toolExecutor, err := initializeTooling(ctx, eventStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize tooling: %w", err)
 	}
@@ -81,7 +81,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	return server, nil
 }
 
-func initializeTooling() (*tools.Registry, *tools.Executor, error) {
+func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tools.Registry, *tools.Executor, error) {
 	registry := tools.NewRegistry()
 
 	definitions := []tools.ToolDefinition{
@@ -190,6 +190,10 @@ func initializeTooling() (*tools.Registry, *tools.Executor, error) {
 		if err := registry.Register(def); err != nil {
 			return nil, nil, fmt.Errorf("failed to register tool %s: %w", def.Name, err)
 		}
+	}
+
+	if err := loadConfiguredPlugins(ctx, registry, eventStore); err != nil {
+		return nil, nil, fmt.Errorf("failed to load plugins: %w", err)
 	}
 
 	executor := tools.NewExecutor(registry, nil)
