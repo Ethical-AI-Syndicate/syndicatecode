@@ -40,7 +40,9 @@ test:
 
 gosec:
   stage: security
-  image: securego/gosec:latest
+  image:
+    name: securego/gosec:latest
+    entrypoint: [""]
   script:
     - gosec -no-few ./...
-  allow_failure: true
+  allow_failure: false
