@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,5 +178,21 @@ func TestHandleToolExecuteDirectExecution(t *testing.T) {
 	server.handleToolExecute(rec, req.WithContext(context.Background()))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestHandleToolExecuteRedactsSecrets(t *testing.T) {
+	server := newApprovalTestServer(t)
+	body := bytes.NewBufferString(`{"tool_name":"echo","input":{"message":"AKIA1234567890ABCDEF"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+
+	server.handleToolExecute(rec, req.WithContext(context.Background()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if strings.Contains(rec.Body.String(), "AKIA1234567890ABCDEF") {
+		t.Fatalf("expected secret to be redacted, got %s", rec.Body.String())
 	}
 }
