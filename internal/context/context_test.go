@@ -10,6 +10,27 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
 
+func testPolicyRedactor(sourceRef, _ string, content string) RedactionDecision {
+	if strings.Contains(content, "AKIA1234567890ABCDEF") {
+		if sourceRef == "turn.message" {
+			return RedactionDecision{
+				Content:     "sha256:test-redaction",
+				Action:      "hash",
+				Sensitivity: "A",
+			}
+		}
+		return RedactionDecision{
+			Content:     "",
+			Action:      "deny",
+			Denied:      true,
+			Reason:      "A policy for model_provider destination",
+			Sensitivity: "A",
+		}
+	}
+
+	return RedactionDecision{Content: content, Action: "none", Sensitivity: "none"}
+}
+
 func TestTurnManager_Create(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
@@ -18,7 +39,7 @@ func TestTurnManager_Create(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithRedactor(eventStore, sessionMgr, testPolicyRedactor)
 
 	ctx := context.Background()
 
@@ -53,7 +74,7 @@ func TestTurnManager_CreateRedactsSecrets(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithRedactor(eventStore, sessionMgr, testPolicyRedactor)
 
 	ctx := context.Background()
 	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
@@ -74,7 +95,39 @@ func TestTurnManager_CreateRedactsSecrets(t *testing.T) {
 	}
 }
 
-func TestTurnManager_Get(t *testing.T) {
+func TestTurnManager_CreateUsesInjectedRedactor(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManagerWithRedactor(eventStore, sessionMgr, func(_ string, _ string, content string) RedactionDecision {
+		return RedactionDecision{
+			Content:     "[redacted] " + content,
+			Action:      "mask",
+			Sensitivity: "A",
+		}
+	})
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	turn, err := turnMgr.Create(ctx, sess.ID, "top secret")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
+
+	if turn.Message != "[redacted] top secret" {
+		t.Fatalf("expected injected redactor message, got %s", turn.Message)
+	}
+}
+
+func TestNewTurnManager_DefaultRedactorHashesPersistedContent(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
@@ -83,6 +136,58 @@ func TestTurnManager_Get(t *testing.T) {
 
 	sessionMgr := session.NewManager(eventStore)
 	turnMgr := NewTurnManager(eventStore, sessionMgr)
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	turn, err := turnMgr.Create(ctx, sess.ID, "hello world")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
+
+	if !strings.HasPrefix(turn.Message, "sha256:") {
+		t.Fatalf("expected default constructor to hash persisted content, got %s", turn.Message)
+	}
+}
+
+func TestNewTurnManagerWithRedactorNilUsesSafeDefault(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManagerWithRedactor(eventStore, sessionMgr, nil)
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	turn, err := turnMgr.Create(ctx, sess.ID, "hello world")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
+
+	if !strings.HasPrefix(turn.Message, "sha256:") {
+		t.Fatalf("expected nil redactor to use safe hash default, got %s", turn.Message)
+	}
+}
+
+func TestTurnManager_Get(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManagerWithRedactor(eventStore, sessionMgr, testPolicyRedactor)
 
 	ctx := context.Background()
 
@@ -117,7 +222,7 @@ func TestTurnManager_ListBySession(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithRedactor(eventStore, sessionMgr, testPolicyRedactor)
 
 	ctx := context.Background()
 
@@ -141,7 +246,7 @@ func TestTurnManager_ListBySession(t *testing.T) {
 }
 
 func TestContextAssembler_AddFragment(t *testing.T) {
-	assembler := NewContextAssembler(1000)
+	assembler := NewContextAssemblerWithRedactor(1000, testPolicyRedactor)
 
 	fragment := &ContextFragment{
 		SourceType:      "file",
@@ -198,7 +303,7 @@ func TestContextAssembler_TokenBudget(t *testing.T) {
 }
 
 func TestContextAssembler_BuildPrompt(t *testing.T) {
-	assembler := NewContextAssembler(1000)
+	assembler := NewContextAssemblerWithRedactor(1000, testPolicyRedactor)
 
 	_ = assembler.AddFragment(&ContextFragment{
 		SourceType: "instruction",
@@ -224,7 +329,7 @@ func TestContextAssembler_BuildPrompt(t *testing.T) {
 }
 
 func TestContextAssembler_BuildPromptAppliesModelProviderPolicy(t *testing.T) {
-	assembler := NewContextAssembler(1000)
+	assembler := NewContextAssemblerWithRedactor(1000, testPolicyRedactor)
 
 	_ = assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
@@ -240,8 +345,79 @@ func TestContextAssembler_BuildPromptAppliesModelProviderPolicy(t *testing.T) {
 	}
 }
 
-func TestContextAssembler_BuildPromptTracksDeniedFragmentState(t *testing.T) {
+func TestContextAssembler_BuildPromptUsesInjectedRedactor(t *testing.T) {
+	assembler := NewContextAssemblerWithRedactor(1000, func(sourceRef string, sourceType string, content string) RedactionDecision {
+		if sourceRef == "src/keys.txt" && sourceType == "file" {
+			return RedactionDecision{
+				Content:     "[safe]",
+				Action:      "mask",
+				Sensitivity: "A",
+			}
+		}
+		return RedactionDecision{Content: content, Action: "none", Sensitivity: "none"}
+	})
+
+	fragment := &ContextFragment{
+		SourceType: "file",
+		SourceRef:  "src/keys.txt",
+		Content:    "AWS key AKIA1234567890ABCDEF",
+		TokenCount: 12,
+	}
+	_ = assembler.AddFragment(fragment)
+
+	prompt := assembler.BuildPrompt()
+
+	if prompt != "[safe]" {
+		t.Fatalf("expected injected redacted prompt, got %s", prompt)
+	}
+	if fragment.RedactionAction != "mask" {
+		t.Fatalf("expected redaction action mask, got %s", fragment.RedactionAction)
+	}
+}
+
+func TestNewContextAssembler_DefaultRedactorDeniesPromptByDefault(t *testing.T) {
 	assembler := NewContextAssembler(1000)
+	fragment := &ContextFragment{
+		SourceType: "instruction",
+		SourceRef:  "system",
+		Content:    "do work",
+		TokenCount: 5,
+	}
+
+	if err := assembler.AddFragment(fragment); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	prompt := assembler.BuildPrompt()
+	if prompt != "" {
+		t.Fatalf("expected default model-provider safeguard to deny prompt content")
+	}
+	if !fragment.RedactionDenied {
+		t.Fatalf("expected denied flag for default safeguard")
+	}
+}
+
+func TestNewContextAssemblerWithRedactorNilUsesSafeDefault(t *testing.T) {
+	assembler := NewContextAssemblerWithRedactor(1000, nil)
+	fragment := &ContextFragment{
+		SourceType: "instruction",
+		SourceRef:  "system",
+		Content:    "do work",
+		TokenCount: 5,
+	}
+
+	if err := assembler.AddFragment(fragment); err != nil {
+		t.Fatalf("failed to add fragment: %v", err)
+	}
+
+	prompt := assembler.BuildPrompt()
+	if prompt != "" {
+		t.Fatalf("expected nil redactor to use deny safeguard")
+	}
+}
+
+func TestContextAssembler_BuildPromptTracksDeniedFragmentState(t *testing.T) {
+	assembler := NewContextAssemblerWithRedactor(1000, testPolicyRedactor)
 	fragment := &ContextFragment{
 		SourceType: "file",
 		SourceRef:  "src/keys.txt",
@@ -277,7 +453,7 @@ func TestTurnManager_CreatePersistsRedactionMetadata(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithRedactor(eventStore, sessionMgr, testPolicyRedactor)
 
 	ctx := context.Background()
 	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
