@@ -29,12 +29,16 @@ func TestLoader_LoadManifestRegistersTools(t *testing.T) {
 	  "name": "example-plugin",
 	  "version": "1.0.0",
 	  "trust_level": "tier1",
+	  "identity": {"plugin_id": "example.plugin", "publisher": "ai-syndicate"},
+	  "approval_defaults": {"read": false, "write": true, "execute": true, "network": true},
 	  "tools": [
 	    {
 	      "name": "plugin_read",
 	      "version": "1",
 	      "side_effect": "read",
 	      "approval_required": false,
+	      "data_access_class": "workspace_read",
+	      "network_scope": "none",
 	      "input_schema": {"path": {"type": "string"}},
 	      "output_schema": {"content": {"type": "string"}},
 	      "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
@@ -61,13 +65,16 @@ func TestLoader_LoadManifestRegistersTools(t *testing.T) {
 	if len(logger.events) != 1 {
 		t.Fatalf("expected one plugin event, got %d", len(logger.events))
 	}
+	if plugin.Identity.PluginID != "example.plugin" {
+		t.Fatalf("unexpected plugin identity id: %s", plugin.Identity.PluginID)
+	}
 }
 
 func TestLoader_RejectsInvalidTrustLevel(t *testing.T) {
 	registry := tools.NewRegistry()
 	loader := NewLoader(registry, nil)
 
-	manifest := `{"name":"bad","version":"1.0.0","trust_level":"tier9","tools":[]}`
+	manifest := `{"name":"bad","version":"1.0.0","trust_level":"tier9","identity":{"plugin_id":"bad","publisher":"ai"},"approval_defaults":{"read":false,"write":true,"execute":true,"network":true},"tools":[]}`
 	tmpDir := t.TempDir()
 	manifestPath := filepath.Join(tmpDir, "bad.json")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
@@ -87,12 +94,16 @@ func TestLoader_RejectsTier0DangerousTool(t *testing.T) {
 	  "name": "bad-plugin",
 	  "version": "1.0.0",
 	  "trust_level": "tier0",
+	  "identity": {"plugin_id": "bad.plugin", "publisher": "ai-syndicate"},
+	  "approval_defaults": {"read": false, "write": true, "execute": true, "network": true},
 	  "tools": [
 	    {
 	      "name": "plugin_exec",
 	      "version": "1",
 	      "side_effect": "execute",
 	      "approval_required": true,
+	      "data_access_class": "workspace_read",
+	      "network_scope": "none",
 	      "input_schema": {},
 	      "output_schema": {},
 	      "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
@@ -135,12 +146,16 @@ func TestLoader_LoadFromDirectoryRegistersJSONManifests(t *testing.T) {
 	  "name": "plugin-a",
 	  "version": "1.0.0",
 	  "trust_level": "tier1",
+	  "identity": {"plugin_id": "plugin.a", "publisher": "ai-syndicate"},
+	  "approval_defaults": {"read": false, "write": true, "execute": true, "network": true},
 	  "tools": [
 	    {
 	      "name": "plugin_a_read",
 	      "version": "1",
 	      "side_effect": "read",
 	      "approval_required": false,
+	      "data_access_class": "workspace_read",
+	      "network_scope": "none",
 	      "input_schema": {},
 	      "output_schema": {},
 	      "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
@@ -151,12 +166,16 @@ func TestLoader_LoadFromDirectoryRegistersJSONManifests(t *testing.T) {
 	  "name": "plugin-b",
 	  "version": "1.0.0",
 	  "trust_level": "tier1",
+	  "identity": {"plugin_id": "plugin.b", "publisher": "ai-syndicate"},
+	  "approval_defaults": {"read": false, "write": true, "execute": true, "network": true},
 	  "tools": [
 	    {
 	      "name": "plugin_b_read",
 	      "version": "1",
 	      "side_effect": "read",
 	      "approval_required": false,
+	      "data_access_class": "workspace_read",
+	      "network_scope": "none",
 	      "input_schema": {},
 	      "output_schema": {},
 	      "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
@@ -186,6 +205,111 @@ func TestLoader_LoadFromDirectoryRegistersJSONManifests(t *testing.T) {
 	}
 	if _, ok := registry.Get("plugin_b_read"); !ok {
 		t.Fatal("expected plugin_b_read tool to be registered")
+	}
+}
+
+func TestLoader_RejectsMissingIdentityAndApprovalDefaults(t *testing.T) {
+	registry := tools.NewRegistry()
+	loader := NewLoader(registry, nil)
+
+	manifest := `{
+	  "name": "missing-schema-fields",
+	  "version": "1.0.0",
+	  "trust_level": "tier1",
+	  "tools": [{
+	    "name": "plugin_read",
+	    "version": "1",
+	    "side_effect": "read",
+	    "data_access_class": "workspace_read",
+	    "network_scope": "none",
+	    "input_schema": {},
+	    "output_schema": {},
+	    "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
+	  }]
+	}`
+
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "missing-fields.json")
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	if _, err := loader.LoadFromFile(context.Background(), manifestPath); err == nil {
+		t.Fatal("expected manifest missing identity/approval_defaults to fail")
+	}
+}
+
+func TestLoader_RejectsInvalidToolScopeFields(t *testing.T) {
+	registry := tools.NewRegistry()
+	loader := NewLoader(registry, nil)
+
+	manifest := `{
+	  "name": "bad-scopes",
+	  "version": "1.0.0",
+	  "trust_level": "tier1",
+	  "identity": {"plugin_id": "bad.scopes", "publisher": "ai-syndicate"},
+	  "approval_defaults": {"read": false, "write": true, "execute": true, "network": true},
+	  "tools": [{
+	    "name": "plugin_read",
+	    "version": "1",
+	    "side_effect": "read",
+	    "data_access_class": "unknown",
+	    "network_scope": "wild",
+	    "input_schema": {},
+	    "output_schema": {},
+	    "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
+	  }]
+	}`
+
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "invalid-scopes.json")
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	if _, err := loader.LoadFromFile(context.Background(), manifestPath); err == nil {
+		t.Fatal("expected invalid data_access_class/network_scope to fail")
+	}
+}
+
+func TestLoader_PersistsValidatedManifestInInventory(t *testing.T) {
+	registry := tools.NewRegistry()
+	loader := NewLoader(registry, nil)
+
+	manifest := `{
+	  "name": "inventory-plugin",
+	  "version": "1.0.0",
+	  "trust_level": "tier1",
+	  "identity": {"plugin_id": "inventory.plugin", "publisher": "ai-syndicate"},
+	  "approval_defaults": {"read": true, "write": true, "execute": true, "network": true},
+	  "tools": [{
+	    "name": "plugin_read",
+	    "version": "1",
+	    "side_effect": "read",
+	    "data_access_class": "workspace_read",
+	    "network_scope": "none",
+	    "input_schema": {},
+	    "output_schema": {},
+	    "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
+	  }]
+	}`
+
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "inventory.json")
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	if _, err := loader.LoadFromFile(context.Background(), manifestPath); err != nil {
+		t.Fatalf("expected manifest to load: %v", err)
+	}
+
+	inventory := loader.Inventory()
+	if len(inventory) != 1 {
+		t.Fatalf("expected one inventory entry, got %d", len(inventory))
+	}
+	if inventory[0].Identity.PluginID != "inventory.plugin" {
+		t.Fatalf("unexpected inventory plugin id: %s", inventory[0].Identity.PluginID)
 	}
 }
 

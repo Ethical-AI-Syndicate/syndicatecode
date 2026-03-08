@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
@@ -15,7 +16,36 @@ type Plugin struct {
 	Name       string                 `json:"name"`
 	Version    string                 `json:"version"`
 	TrustLevel string                 `json:"trust_level"`
+	Identity   PluginIdentity         `json:"identity"`
+	Defaults   ApprovalDefaults       `json:"approval_defaults"`
 	Tools      []tools.ToolDefinition `json:"tools"`
+}
+
+type PluginIdentity struct {
+	PluginID  string `json:"plugin_id"`
+	Publisher string `json:"publisher"`
+}
+
+type ApprovalDefaults struct {
+	Read    bool `json:"read"`
+	Write   bool `json:"write"`
+	Execute bool `json:"execute"`
+	Network bool `json:"network"`
+}
+
+type ManifestTool struct {
+	tools.ToolDefinition
+	DataAccessClass string `json:"data_access_class"`
+	NetworkScope    string `json:"network_scope"`
+}
+
+type rawPluginManifest struct {
+	Name       string           `json:"name"`
+	Version    string           `json:"version"`
+	TrustLevel string           `json:"trust_level"`
+	Identity   PluginIdentity   `json:"identity"`
+	Defaults   ApprovalDefaults `json:"approval_defaults"`
+	Tools      []ManifestTool   `json:"tools"`
 }
 
 type EventLogger interface {
@@ -23,12 +53,20 @@ type EventLogger interface {
 }
 
 type Loader struct {
-	registry *tools.Registry
-	logger   EventLogger
+	registry  *tools.Registry
+	logger    EventLogger
+	inventory *ExtensionInventory
 }
 
 func NewLoader(registry *tools.Registry, logger EventLogger) *Loader {
-	return &Loader{registry: registry, logger: logger}
+	return &Loader{registry: registry, logger: logger, inventory: NewExtensionInventory()}
+}
+
+func (l *Loader) Inventory() []Plugin {
+	if l == nil || l.inventory == nil {
+		return nil
+	}
+	return l.inventory.List()
 }
 
 func (l *Loader) LoadFromFile(ctx context.Context, manifestPath string) (*Plugin, error) {
@@ -49,12 +87,17 @@ func (l *Loader) LoadFromFile(ctx context.Context, manifestPath string) (*Plugin
 		return nil, fmt.Errorf("failed to read manifest %s: %w", validatedPath, err)
 	}
 
-	var plugin Plugin
-	if err := json.Unmarshal(body, &plugin); err != nil {
+	var raw rawPluginManifest
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse manifest %s: %w", validatedPath, err)
 	}
 
-	if err := validatePlugin(plugin); err != nil {
+	plugin, err := toPlugin(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validatePlugin(*plugin); err != nil {
 		return nil, err
 	}
 
@@ -71,13 +114,17 @@ func (l *Loader) LoadFromFile(ctx context.Context, manifestPath string) (*Plugin
 		if err := l.logger.LogPluginEvent(ctx, plugin.Name, "loaded", map[string]interface{}{
 			"manifest_path": validatedPath,
 			"trust_level":   plugin.TrustLevel,
+			"plugin_id":     plugin.Identity.PluginID,
+			"publisher":     plugin.Identity.Publisher,
 			"tool_count":    len(plugin.Tools),
 		}); err != nil {
 			return nil, fmt.Errorf("failed to log plugin event for %s: %w", plugin.Name, err)
 		}
 	}
 
-	return &plugin, nil
+	l.inventory.Upsert(*plugin)
+
+	return plugin, nil
 }
 
 func (l *Loader) LoadFromDir(ctx context.Context, manifestDir string) ([]*Plugin, error) {
@@ -121,10 +168,112 @@ func validatePlugin(plugin Plugin) error {
 	if !isValidTrustLevel(plugin.TrustLevel) {
 		return fmt.Errorf("invalid trust level: %s", plugin.TrustLevel)
 	}
+	if plugin.Identity.PluginID == "" {
+		return fmt.Errorf("plugin identity.plugin_id is required")
+	}
+	if plugin.Identity.Publisher == "" {
+		return fmt.Errorf("plugin identity.publisher is required")
+	}
 	if plugin.Tools == nil {
 		return fmt.Errorf("plugin tools are required")
 	}
 	return nil
+}
+
+func toPlugin(raw rawPluginManifest) (*Plugin, error) {
+	defs := make([]tools.ToolDefinition, 0, len(raw.Tools))
+	for _, toolDef := range raw.Tools {
+		if toolDef.DataAccessClass == "" {
+			return nil, fmt.Errorf("tool %s data_access_class is required", toolDef.Name)
+		}
+		if !isValidDataAccessClass(toolDef.DataAccessClass) {
+			return nil, fmt.Errorf("tool %s has invalid data_access_class %s", toolDef.Name, toolDef.DataAccessClass)
+		}
+		if toolDef.NetworkScope == "" {
+			return nil, fmt.Errorf("tool %s network_scope is required", toolDef.Name)
+		}
+		if !isValidNetworkScope(toolDef.NetworkScope) {
+			return nil, fmt.Errorf("tool %s has invalid network_scope %s", toolDef.Name, toolDef.NetworkScope)
+		}
+
+		tool := toolDef.ToolDefinition
+		tool.Security = tools.SecurityMetadata{
+			NetworkAccess:   toolDef.NetworkScope != "none",
+			FilesystemScope: toolDef.DataAccessClass,
+		}
+		if !tool.ApprovalRequired {
+			tool.ApprovalRequired = approvalDefaultForSideEffect(raw.Defaults, tool.SideEffect)
+		}
+
+		defs = append(defs, tool)
+	}
+
+	return &Plugin{
+		Name:       raw.Name,
+		Version:    raw.Version,
+		TrustLevel: raw.TrustLevel,
+		Identity:   raw.Identity,
+		Defaults:   raw.Defaults,
+		Tools:      defs,
+	}, nil
+}
+
+func approvalDefaultForSideEffect(defaults ApprovalDefaults, sideEffect tools.SideEffect) bool {
+	switch sideEffect {
+	case tools.SideEffectRead:
+		return defaults.Read
+	case tools.SideEffectWrite:
+		return defaults.Write
+	case tools.SideEffectExecute:
+		return defaults.Execute
+	case tools.SideEffectNetwork:
+		return defaults.Network
+	default:
+		return false
+	}
+}
+
+func isValidDataAccessClass(value string) bool {
+	switch value {
+	case "none", "metadata", "workspace_read", "workspace_write", "secrets":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidNetworkScope(value string) bool {
+	switch value {
+	case "none", "egress_limited", "egress_open":
+		return true
+	default:
+		return false
+	}
+}
+
+type ExtensionInventory struct {
+	mu      sync.RWMutex
+	plugins map[string]Plugin
+}
+
+func NewExtensionInventory() *ExtensionInventory {
+	return &ExtensionInventory{plugins: make(map[string]Plugin)}
+}
+
+func (i *ExtensionInventory) Upsert(plugin Plugin) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.plugins[plugin.Identity.PluginID] = plugin
+}
+
+func (i *ExtensionInventory) List() []Plugin {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	result := make([]Plugin, 0, len(i.plugins))
+	for _, plugin := range i.plugins {
+		result = append(result, plugin)
+	}
+	return result
 }
 
 func isValidTrustLevel(trustLevel string) bool {
