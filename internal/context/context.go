@@ -51,7 +51,8 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		return nil, err
 	}
 
-	redactedMessage := secrets.RedactString(message)
+	decision := secrets.NewPolicyExecutor(nil).Apply("turn.message", "user_input", message, secrets.DestinationPersistence)
+	redactedMessage := decision.Content
 	now := time.Now()
 	turn := &Turn{
 		ID:        uuid.New().String(),
@@ -220,8 +221,13 @@ func (a *ContextAssembler) BuildPrompt() string {
 	})
 
 	var parts []string
+	policy := secrets.NewPolicyExecutor(nil)
 	for _, f := range a.fragments {
-		parts = append(parts, f.Content)
+		decision := policy.Apply(f.SourceRef, f.SourceType, f.Content, secrets.DestinationModelProvider)
+		if decision.Denied {
+			continue
+		}
+		parts = append(parts, decision.Content)
 	}
 
 	return strings.Join(parts, "\n\n")

@@ -569,7 +569,7 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Output != nil {
-		result.Output = secrets.NewDetector().RedactMap(result.Output)
+		result.Output = secrets.NewPolicyExecutor(nil).ApplyMap(req.ToolName, "tool_output", secrets.DestinationUI, result.Output)
 	}
 
 	if err := json.NewEncoder(w).Encode(result); err != nil {
