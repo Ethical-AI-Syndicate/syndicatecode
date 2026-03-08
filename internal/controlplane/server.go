@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
@@ -42,6 +43,23 @@ type Server struct {
 	approvalMgr  *ApprovalManager
 	toolRegistry *tools.Registry
 	toolExecutor *tools.Executor
+}
+
+const redactionAuditSessionID = "system:redaction"
+
+type redactionNotice struct {
+	Path           string `json:"path"`
+	Destination    string `json:"destination"`
+	Action         string `json:"action"`
+	Sensitivity    string `json:"sensitivity"`
+	Reason         string `json:"reason"`
+	Denied         bool   `json:"denied"`
+	MaterialImpact bool   `json:"material_impact"`
+}
+
+type toolExecuteResponse struct {
+	*tools.ToolResult
+	RedactionNotices []redactionNotice `json:"redaction_notices,omitempty"`
 }
 
 func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
@@ -568,13 +586,114 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	notices := make([]redactionNotice, 0)
 	if result.Output != nil {
-		result.Output = secrets.NewPolicyExecutor(nil).ApplyMap(req.ToolName, "tool_output", secrets.DestinationUI, result.Output)
+		result.Output, notices = applyRedactionPolicyWithNotices(secrets.NewPolicyExecutor(nil), req.ToolName, "tool_output", secrets.DestinationUI, result.Output)
+		if len(notices) > 0 {
+			s.recordRedactionEvent(r.Context(), req.ToolName, notices)
+		}
 	}
 
-	if err := json.NewEncoder(w).Encode(result); err != nil {
+	if err := json.NewEncoder(w).Encode(toolExecuteResponse{ToolResult: result, RedactionNotices: notices}); err != nil {
 		log.Printf("failed to encode tool response: %v", err)
 	}
+}
+
+func applyRedactionPolicyWithNotices(policy *secrets.PolicyExecutor, path, sourceType string, destination secrets.Destination, input map[string]interface{}) (map[string]interface{}, []redactionNotice) {
+	if input == nil {
+		return nil, nil
+	}
+
+	output := make(map[string]interface{}, len(input))
+	notices := make([]redactionNotice, 0)
+	for key, value := range input {
+		fieldPath := path + "." + key
+		sanitized, fieldNotices := applyRedactionToValue(policy, fieldPath, sourceType, destination, value)
+		output[key] = sanitized
+		notices = append(notices, fieldNotices...)
+	}
+
+	return output, notices
+}
+
+func applyRedactionToValue(policy *secrets.PolicyExecutor, fieldPath, sourceType string, destination secrets.Destination, value interface{}) (interface{}, []redactionNotice) {
+	switch typed := value.(type) {
+	case string:
+		decision := policy.Apply(fieldPath, sourceType, typed, destination)
+		if decision.Action == secrets.ActionAllow {
+			return decision.Content, nil
+		}
+		notice := redactionNotice{
+			Path:           fieldPath,
+			Destination:    string(destination),
+			Action:         string(decision.Action),
+			Sensitivity:    string(decision.Classification.Class),
+			Reason:         decision.Reason,
+			Denied:         decision.Denied,
+			MaterialImpact: decision.Denied || decision.Content != typed,
+		}
+		return decision.Content, []redactionNotice{notice}
+	case map[string]interface{}:
+		return applyRedactionPolicyWithNotices(policy, fieldPath, sourceType, destination, typed)
+	case []interface{}:
+		return applyRedactionToSlice(policy, fieldPath, sourceType, destination, typed)
+	default:
+		return value, nil
+	}
+}
+
+func applyRedactionToSlice(policy *secrets.PolicyExecutor, fieldPath, sourceType string, destination secrets.Destination, input []interface{}) ([]interface{}, []redactionNotice) {
+	output := make([]interface{}, 0, len(input))
+	notices := make([]redactionNotice, 0)
+	for idx, item := range input {
+		nestedPath := fmt.Sprintf("%s[%d]", fieldPath, idx)
+		sanitized, itemNotices := applyRedactionToValue(policy, nestedPath, sourceType, destination, item)
+		output = append(output, sanitized)
+		notices = append(notices, itemNotices...)
+	}
+	return output, notices
+}
+
+func (s *Server) recordRedactionEvent(ctx context.Context, toolName string, notices []redactionNotice) {
+	if s.eventStore == nil || len(notices) == 0 {
+		return
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"tool_name":           toolName,
+		"destination":         string(secrets.DestinationUI),
+		"redaction_notices":   notices,
+		"material_impact":     hasMaterialImpact(notices),
+		"redaction_applied":   true,
+		"notice_count":        len(notices),
+		"policy_visibility_v": "1",
+	})
+	if err != nil {
+		log.Printf("failed to marshal redaction event payload: %v", err)
+		return
+	}
+
+	err = s.eventStore.Append(ctx, audit.Event{
+		ID:            uuid.NewString(),
+		SessionID:     redactionAuditSessionID,
+		Timestamp:     time.Now().UTC(),
+		EventType:     "tool_output_redaction",
+		Actor:         "system",
+		PolicyVersion: "1.0.0",
+		Payload:       payload,
+	})
+	if err != nil {
+		log.Printf("failed to append redaction event: %v", err)
+	}
+}
+
+func hasMaterialImpact(notices []redactionNotice) bool {
+	for _, notice := range notices {
+		if notice.MaterialImpact {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) ListenAndServe() error {
