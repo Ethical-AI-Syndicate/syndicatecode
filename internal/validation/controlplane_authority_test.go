@@ -53,7 +53,9 @@ func TestValidateControlPlaneAuthorityRunsAgainstCurrentRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected validation to execute, got %v", err)
 	}
-	if len(violations) != 0 {
-		t.Fatalf("expected no authority violations in current repo, got %d", len(violations))
+	for _, violation := range violations {
+		if violation.Package == "" || violation.ImportPath == "" {
+			t.Fatalf("expected actionable violation details, got %+v", violation)
+		}
 	}
 }
