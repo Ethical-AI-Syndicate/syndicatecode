@@ -14,6 +14,7 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/policy"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/sandbox"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
@@ -21,16 +22,18 @@ import (
 )
 
 type Config struct {
-	Addr         string
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
+	Addr               string
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	ProviderPolicyPath string
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Addr:         ":7777",
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:               ":7777",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		ProviderPolicyPath: "",
 	}
 }
 
@@ -63,6 +66,18 @@ type toolExecuteResponse struct {
 }
 
 func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+
+	if cfg.ProviderPolicyPath != "" {
+		if _, err := policy.LoadProviderPolicy(cfg.ProviderPolicyPath); err != nil {
+			return nil, fmt.Errorf("failed to load provider policy: %w", err)
+		}
+	} else if err := policy.DefaultProviderPolicy().Validate(); err != nil {
+		return nil, fmt.Errorf("invalid default provider policy: %w", err)
+	}
+
 	eventStore, err := audit.NewEventStore("syndicatecode.db")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event store: %w", err)
