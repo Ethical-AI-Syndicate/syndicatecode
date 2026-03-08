@@ -37,6 +37,23 @@ go vet ./...
 
 ---
 
+## Workspace Isolation (Git Worktrees)
+
+- Every task must run in a dedicated worktree.
+- Create worktrees with the repository helper so Beads is bootstrapped automatically:
+
+```bash
+./scripts/create_worktree.sh <task-id> <task-branch> [base-ref]
+```
+
+- If a worktree was created manually, run this once before `bd ready`:
+
+```bash
+./scripts/bootstrap_beads_worktree.sh
+```
+
+---
+
 ## Code Style Guidelines
 
 ### General Principles
