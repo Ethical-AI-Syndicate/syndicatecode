@@ -37,6 +37,8 @@ type ToolDefinition struct {
 	Name             string                 `json:"name"`
 	Version          string                 `json:"version"`
 	Description      string                 `json:"description,omitempty"`
+	Source           string                 `json:"source,omitempty"`
+	TrustLevel       string                 `json:"trust_level,omitempty"`
 	SideEffect       SideEffect             `json:"side_effect"`
 	ApprovalRequired bool                   `json:"approval_required"`
 	InputSchema      map[string]FieldSchema `json:"input_schema"`
@@ -44,6 +46,11 @@ type ToolDefinition struct {
 	Limits           ExecutionLimits        `json:"limits"`
 	Security         SecurityMetadata       `json:"security,omitempty"`
 }
+
+const (
+	ToolSourceCore   = "core"
+	ToolSourcePlugin = "plugin"
+)
 
 func (t *ToolDefinition) Validate() error {
 	if t.Name == "" {
@@ -68,9 +75,10 @@ func (t *ToolDefinition) Validate() error {
 }
 
 type ToolCall struct {
-	ToolName string                 `json:"tool_name"`
-	Input    map[string]interface{} `json:"input"`
-	ID       string                 `json:"id,omitempty"`
+	ToolName  string                 `json:"tool_name"`
+	SessionID string                 `json:"session_id,omitempty"`
+	Input     map[string]interface{} `json:"input"`
+	ID        string                 `json:"id,omitempty"`
 }
 
 type ToolResult struct {
