@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/validation"
 )
 
 type schemaValueType string
@@ -81,21 +83,28 @@ func schemaValidationMiddleware(requestSchemas, responseSchemas map[string]jsonO
 }
 
 func sessionsCreateRequestSchema() jsonObjectSchema {
-	return jsonObjectSchema{
-		"repo_path":  {Type: schemaTypeString, Required: true},
-		"trust_tier": {Type: schemaTypeString, Required: true},
-	}
+	return mustSchemaFromRegistry(validation.ContractAPISessionCreateRequest)
 }
 
 func sessionsCreateResponseSchema() jsonObjectSchema {
-	return jsonObjectSchema{
-		"session_id": {Type: schemaTypeString, Required: true},
-		"repo_path":  {Type: schemaTypeString, Required: true},
-		"trust_tier": {Type: schemaTypeString, Required: true},
-		"status":     {Type: schemaTypeString, Required: true},
-		"created_at": {Type: schemaTypeString, Required: true},
-		"updated_at": {Type: schemaTypeString, Required: true},
+	return mustSchemaFromRegistry(validation.ContractAPISessionCreateResponse)
+}
+
+func mustSchemaFromRegistry(contractID string) jsonObjectSchema {
+	definition, ok := validation.DefaultRegistry().Get(contractID)
+	if !ok {
+		panic(fmt.Sprintf("missing schema definition: %s", contractID))
 	}
+
+	result := make(jsonObjectSchema, len(definition.Object))
+	for fieldName, fieldSpec := range definition.Object {
+		result[fieldName] = schemaField{
+			Type:     schemaValueType(fieldSpec.Type),
+			Required: fieldSpec.Required,
+		}
+	}
+
+	return result
 }
 
 func validateJSONObject(body []byte, schema jsonObjectSchema) []schemaViolation {
