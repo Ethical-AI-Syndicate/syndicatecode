@@ -18,12 +18,16 @@ func TestLoadConfiguredPlugins_RegistersManifestToolsAndLogsEvent(t *testing.T) 
 	  "name": "controlplane-plugin",
 	  "version": "1.0.0",
 	  "trust_level": "tier1",
+	  "identity": {"plugin_id": "controlplane.plugin", "publisher": "ai-syndicate"},
+	  "approval_defaults": {"read": false, "write": true, "execute": true, "network": true},
 	  "tools": [
 	    {
 	      "name": "controlplane_plugin_read",
 	      "version": "1",
 	      "side_effect": "read",
 	      "approval_required": false,
+	      "data_access_class": "workspace_read",
+	      "network_scope": "none",
 	      "input_schema": {},
 	      "output_schema": {},
 	      "limits": {"timeout_seconds": 10, "max_output_bytes": 1024}
