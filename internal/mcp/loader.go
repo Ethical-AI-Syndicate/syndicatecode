@@ -102,6 +102,8 @@ func (l *Loader) LoadFromFile(ctx context.Context, manifestPath string) (*Plugin
 	}
 
 	for _, def := range plugin.Tools {
+		def.Source = tools.ToolSourcePlugin
+		def.TrustLevel = plugin.TrustLevel
 		if err := validateToolForTrust(plugin.TrustLevel, def); err != nil {
 			return nil, err
 		}
