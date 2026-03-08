@@ -7,8 +7,125 @@ import (
 	"testing"
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
+
+type fakeRedactionPolicy struct {
+	decision RedactionDecision
+}
+
+type secretsRedactionPolicy struct {
+	executor *secrets.PolicyExecutor
+}
+
+func (p secretsRedactionPolicy) Apply(sourceRef, sourceType, content string, destination RedactionDestination) RedactionDecision {
+	secretDestination := secrets.DestinationPersistence
+	if destination == DestinationModelProvider {
+		secretDestination = secrets.DestinationModelProvider
+	}
+
+	decision := p.executor.Apply(sourceRef, sourceType, content, secretDestination)
+	return RedactionDecision{
+		Content:             decision.Content,
+		Action:              string(decision.Action),
+		Denied:              decision.Denied,
+		Reason:              decision.Reason,
+		SensitivityClass:    string(decision.Classification.Class),
+		ClassificationLevel: string(decision.Classification.Level),
+	}
+}
+
+func (p fakeRedactionPolicy) Apply(sourceRef, sourceType, content string, destination RedactionDestination) RedactionDecision {
+	_ = sourceRef
+	_ = sourceType
+	_ = content
+	_ = destination
+	return p.decision
+}
+
+func TestTurnManager_Create_UsesInjectedRedactionPolicy(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, fakeRedactionPolicy{decision: RedactionDecision{
+		Content:             "[REDACTED]",
+		Action:              "hash",
+		Denied:              false,
+		Reason:              "policy applied",
+		SensitivityClass:    "A",
+		ClassificationLevel: "secret_denied",
+	}})
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	turn, err := turnMgr.Create(ctx, sess.ID, "my key is AKIA1234567890ABCDEF")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
+	if turn.Message != "[REDACTED]" {
+		t.Fatalf("expected injected policy message, got %s", turn.Message)
+	}
+
+	events, err := eventStore.QueryBySession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("failed to query events: %v", err)
+	}
+
+	var payload map[string]interface{}
+	for _, event := range events {
+		if event.EventType != "turn_started" {
+			continue
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("failed to decode payload: %v", err)
+		}
+	}
+
+	if payload["redaction_action"] != "hash" {
+		t.Fatalf("expected redaction_action hash, got %v", payload["redaction_action"])
+	}
+	if payload["sensitivity_class"] != "A" {
+		t.Fatalf("expected sensitivity_class A, got %v", payload["sensitivity_class"])
+	}
+	if payload["classification_level"] != "secret_denied" {
+		t.Fatalf("expected classification_level secret_denied, got %v", payload["classification_level"])
+	}
+}
+
+func TestTurnManager_DefaultPolicyDeniesWhenNotConfigured(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManager(eventStore, sessionMgr)
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	turn, err := turnMgr.Create(ctx, sess.ID, "hello")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
+
+	if turn.Message != "[DENIED]" {
+		t.Fatalf("expected secure default to deny content, got %s", turn.Message)
+	}
+}
 
 func TestTurnManager_Create(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
@@ -18,7 +135,7 @@ func TestTurnManager_Create(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	ctx := context.Background()
 
@@ -53,7 +170,7 @@ func TestTurnManager_CreateRedactsSecrets(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	ctx := context.Background()
 	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
@@ -82,7 +199,7 @@ func TestTurnManager_Get(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	ctx := context.Background()
 
@@ -117,7 +234,7 @@ func TestTurnManager_ListBySession(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	ctx := context.Background()
 
@@ -141,7 +258,7 @@ func TestTurnManager_ListBySession(t *testing.T) {
 }
 
 func TestContextAssembler_AddFragment(t *testing.T) {
-	assembler := NewContextAssembler(1000)
+	assembler := NewContextAssemblerWithPolicy(1000, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	fragment := &ContextFragment{
 		SourceType:      "file",
@@ -163,7 +280,7 @@ func TestContextAssembler_AddFragment(t *testing.T) {
 }
 
 func TestContextAssembler_TokenBudget(t *testing.T) {
-	assembler := NewContextAssembler(100)
+	assembler := NewContextAssemblerWithPolicy(100, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	err := assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
@@ -198,7 +315,7 @@ func TestContextAssembler_TokenBudget(t *testing.T) {
 }
 
 func TestContextAssembler_BuildPrompt(t *testing.T) {
-	assembler := NewContextAssembler(1000)
+	assembler := NewContextAssemblerWithPolicy(1000, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	_ = assembler.AddFragment(&ContextFragment{
 		SourceType: "instruction",
@@ -224,7 +341,7 @@ func TestContextAssembler_BuildPrompt(t *testing.T) {
 }
 
 func TestContextAssembler_BuildPromptAppliesModelProviderPolicy(t *testing.T) {
-	assembler := NewContextAssembler(1000)
+	assembler := NewContextAssemblerWithPolicy(1000, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	_ = assembler.AddFragment(&ContextFragment{
 		SourceType: "file",
@@ -241,7 +358,7 @@ func TestContextAssembler_BuildPromptAppliesModelProviderPolicy(t *testing.T) {
 }
 
 func TestContextAssembler_BuildPromptTracksDeniedFragmentState(t *testing.T) {
-	assembler := NewContextAssembler(1000)
+	assembler := NewContextAssemblerWithPolicy(1000, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 	fragment := &ContextFragment{
 		SourceType: "file",
 		SourceRef:  "src/keys.txt",
@@ -269,6 +386,26 @@ func TestContextAssembler_BuildPromptTracksDeniedFragmentState(t *testing.T) {
 	}
 }
 
+func TestContextAssembler_DefaultPolicyDeniesWhenNotConfigured(t *testing.T) {
+	assembler := NewContextAssembler(1000)
+	fragment := &ContextFragment{
+		SourceType: "file",
+		SourceRef:  "src/main.go",
+		Content:    "package main",
+		TokenCount: 5,
+	}
+
+	_ = assembler.AddFragment(fragment)
+	prompt := assembler.BuildPrompt()
+
+	if prompt != "" {
+		t.Fatalf("expected secure default policy to deny prompt content")
+	}
+	if fragment.ExclusionReason != "policy_denied" {
+		t.Fatalf("expected policy_denied exclusion reason, got %s", fragment.ExclusionReason)
+	}
+}
+
 func TestTurnManager_CreatePersistsRedactionMetadata(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
@@ -277,7 +414,7 @@ func TestTurnManager_CreatePersistsRedactionMetadata(t *testing.T) {
 	t.Cleanup(func() { _ = eventStore.Close() })
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := NewTurnManager(eventStore, sessionMgr)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
 
 	ctx := context.Background()
 	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
