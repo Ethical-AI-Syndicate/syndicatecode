@@ -568,6 +568,11 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateToolDataAccess(toolDef, req.Input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	hidden, err := s.isToolHiddenForSession(r.Context(), req.SessionID, toolDef)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -578,7 +583,7 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if toolDef.ApprovalRequired {
+	if requiresApproval(toolDef) {
 		approval, err := s.approvalMgr.Propose("", req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -606,6 +611,51 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(toolExecuteResponse{ToolResult: result, RedactionNotices: notices}); err != nil {
 		log.Printf("failed to encode tool response: %v", err)
+	}
+}
+
+func requiresApproval(toolDef tools.ToolDefinition) bool {
+	if toolDef.ApprovalRequired {
+		return true
+	}
+	if toolDef.Source != tools.ToolSourcePlugin {
+		return false
+	}
+
+	switch toolDef.SideEffect {
+	case tools.SideEffectWrite, tools.SideEffectExecute, tools.SideEffectNetwork:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateToolDataAccess(toolDef tools.ToolDefinition, input map[string]interface{}) error {
+	if toolDef.Source != tools.ToolSourcePlugin {
+		return nil
+	}
+
+	if full, ok := input["full_context"].(bool); ok && full {
+		return fmt.Errorf("plugin tools must request scoped context, full context is not allowed")
+	}
+
+	scope := toolDef.Security.FilesystemScope
+	if scope == "" {
+		return fmt.Errorf("plugin tool %s missing data access scope", toolDef.Name)
+	}
+
+	path, hasPath := input["path"].(string)
+	if !hasPath || path == "" {
+		return nil
+	}
+
+	switch scope {
+	case "none", "metadata":
+		return fmt.Errorf("plugin tool %s does not allow path access for scope %s", toolDef.Name, scope)
+	case "workspace_read", "workspace_write", "secrets":
+		return nil
+	default:
+		return fmt.Errorf("plugin tool %s has invalid data access scope %s", toolDef.Name, scope)
 	}
 }
 
