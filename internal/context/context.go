@@ -265,7 +265,10 @@ func NewContextManifest(eventStore *audit.EventStore) *ContextManifest {
 func (m *ContextManifest) Record(ctx context.Context, sessionID, turnID string, fragments []ContextFragment) error {
 	now := time.Now()
 	for _, f := range fragments {
-		payload, _ := json.Marshal(f)
+		payload, err := json.Marshal(f)
+		if err != nil {
+			return err
+		}
 		event := audit.Event{
 			ID:            uuid.New().String(),
 			SessionID:     sessionID,
