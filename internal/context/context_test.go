@@ -2,6 +2,7 @@ package context
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
@@ -66,6 +67,9 @@ func TestTurnManager_CreateRedactsSecrets(t *testing.T) {
 
 	if turn.Message == "my key is AKIA1234567890ABCDEF" {
 		t.Fatalf("expected message to be redacted")
+	}
+	if !strings.HasPrefix(turn.Message, "sha256:") {
+		t.Fatalf("expected persistence-safe hashed content, got %s", turn.Message)
 	}
 }
 
@@ -215,6 +219,23 @@ func TestContextAssembler_BuildPrompt(t *testing.T) {
 
 	if len(prompt) == 0 {
 		t.Error("expected non-empty prompt")
+	}
+}
+
+func TestContextAssembler_BuildPromptAppliesModelProviderPolicy(t *testing.T) {
+	assembler := NewContextAssembler(1000)
+
+	_ = assembler.AddFragment(&ContextFragment{
+		SourceType: "file",
+		SourceRef:  "src/keys.txt",
+		Content:    "AWS key AKIA1234567890ABCDEF",
+		TokenCount: 12,
+	})
+
+	prompt := assembler.BuildPrompt()
+
+	if strings.Contains(prompt, "AKIA1234567890ABCDEF") {
+		t.Fatalf("expected prompt egress policy to remove raw secret")
 	}
 }
 
