@@ -1,8 +1,34 @@
 package secrets
 
 import (
+	"math"
 	"regexp"
+	"strings"
 )
+
+type ClassificationLevel string
+
+const (
+	LevelNormal          ClassificationLevel = "normal"
+	LevelRestricted      ClassificationLevel = "restricted"
+	LevelSecretCandidate ClassificationLevel = "secret_candidate"
+	LevelSecretDenied    ClassificationLevel = "secret_denied"
+)
+
+type SensitivityClass string
+
+const (
+	ClassA SensitivityClass = "A"
+	ClassB SensitivityClass = "B"
+	ClassC SensitivityClass = "C"
+	ClassD SensitivityClass = "D"
+)
+
+type Classification struct {
+	Level   ClassificationLevel `json:"level"`
+	Class   SensitivityClass    `json:"class"`
+	Signals []string            `json:"signals"`
+}
 
 type Match struct {
 	RuleName string
@@ -38,6 +64,32 @@ func (d *Detector) Scan(content string) []Match {
 		}
 	}
 	return matches
+}
+
+func (d *Detector) Classify(path, sourceType, content string) Classification {
+	matches := d.Scan(content)
+	signals := make([]string, 0)
+	for _, match := range matches {
+		signals = append(signals, match.RuleName)
+	}
+
+	if hasSignal(signals, "private_key") || hasSignal(signals, "aws_access_key") || hasSignal(signals, "github_pat") {
+		return Classification{Level: LevelSecretDenied, Class: ClassA, Signals: signals}
+	}
+
+	if hasSignal(signals, "env_secret") || containsHighEntropyToken(content) {
+		if containsHighEntropyToken(content) {
+			signals = append(signals, "high_entropy")
+		}
+		return Classification{Level: LevelSecretCandidate, Class: ClassB, Signals: uniqueSignals(signals)}
+	}
+
+	if isRestrictedPath(path) || sourceType == "env" {
+		signals = append(signals, "restricted_path")
+		return Classification{Level: LevelRestricted, Class: ClassC, Signals: uniqueSignals(signals)}
+	}
+
+	return Classification{Level: LevelNormal, Class: ClassD, Signals: uniqueSignals(signals)}
 }
 
 func (d *Detector) RedactString(content string) string {
@@ -84,4 +136,61 @@ func (d *Detector) redactSlice(input []interface{}) []interface{} {
 
 func RedactString(content string) string {
 	return NewDetector().RedactString(content)
+}
+
+func hasSignal(signals []string, target string) bool {
+	for _, signal := range signals {
+		if signal == target {
+			return true
+		}
+	}
+	return false
+}
+
+func isRestrictedPath(path string) bool {
+	lowerPath := strings.ToLower(path)
+	return strings.Contains(lowerPath, ".env") || strings.Contains(lowerPath, "secret") || strings.Contains(lowerPath, "credential")
+}
+
+func containsHighEntropyToken(content string) bool {
+	for _, token := range strings.Fields(content) {
+		cleaned := strings.Trim(token, "\"'.,:;()[]{}")
+		if len(cleaned) < 24 {
+			continue
+		}
+		if shannonEntropy(cleaned) >= 3.8 {
+			return true
+		}
+	}
+	return false
+}
+
+func shannonEntropy(value string) float64 {
+	if value == "" {
+		return 0
+	}
+	counts := map[rune]float64{}
+	for _, ch := range value {
+		counts[ch]++
+	}
+	length := float64(len(value))
+	entropy := 0.0
+	for _, count := range counts {
+		p := count / length
+		entropy -= p * math.Log2(p)
+	}
+	return entropy
+}
+
+func uniqueSignals(signals []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		if _, exists := seen[signal]; exists {
+			continue
+		}
+		seen[signal] = struct{}{}
+		result = append(result, signal)
+	}
+	return result
 }
