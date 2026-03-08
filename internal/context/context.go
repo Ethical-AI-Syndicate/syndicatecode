@@ -152,12 +152,22 @@ var ErrTurnNotFound = errors.New("turn not found")
 
 // ContextFragment represents a piece of context included in the prompt
 type ContextFragment struct {
-	SourceType      string `json:"source_type"` // file, tool_output, instruction, git
-	SourceRef       string `json:"source_ref"`
-	Content         string `json:"content"`
-	TokenCount      int    `json:"token_count"`
-	Truncated       bool   `json:"truncated"`
-	InclusionReason string `json:"inclusion_reason"` // user_requested, auto, priority
+	SourceType      string            `json:"source_type"` // file, tool_output, instruction, git
+	SourceRef       string            `json:"source_ref"`
+	Content         string            `json:"content"`
+	TokenCount      int               `json:"token_count"`
+	Included        bool              `json:"included"`
+	ExclusionReason string            `json:"exclusion_reason,omitempty"`
+	Truncated       bool              `json:"truncated"`
+	InclusionReason string            `json:"inclusion_reason"` // user_requested, auto, priority
+	Sensitivity     string            `json:"sensitivity"`
+	FreshnessState  string            `json:"freshness_state"`
+	Conflicts       []ContextConflict `json:"conflicts,omitempty"`
+}
+
+type ContextConflict struct {
+	WithSourceRef string `json:"with_source_ref"`
+	Reason        string `json:"reason"`
 }
 
 // ContextAssembler assembles context from fragments with token budgeting
