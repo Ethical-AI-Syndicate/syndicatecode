@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
 
@@ -246,5 +248,70 @@ func TestHandleToolExecuteRedactsSecrets(t *testing.T) {
 
 	if strings.Contains(rec.Body.String(), "AKIA1234567890ABCDEF") {
 		t.Fatalf("expected secret to be redacted, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleToolExecuteReturnsRedactionNotice(t *testing.T) {
+	server := newApprovalTestServer(t)
+	body := bytes.NewBufferString(`{"tool_name":"echo","input":{"message":"AKIA1234567890ABCDEF"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+
+	server.handleToolExecute(rec, req.WithContext(context.Background()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var result tools.ToolResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to decode tool result: %v", err)
+	}
+	if result.RedactionNotice == nil {
+		t.Fatalf("expected redaction notice when secret is redacted")
+	}
+	if !result.RedactionNotice.MaterialImpact {
+		t.Fatalf("expected material impact to be true")
+	}
+}
+
+func TestHandleToolExecutePersistsAuditSafeRedactionEvent(t *testing.T) {
+	eventStore, err := audit.NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	defer func() {
+		_ = eventStore.Close()
+	}()
+
+	server := newApprovalTestServer(t)
+	server.eventStore = eventStore
+
+	body := bytes.NewBufferString(`{"tool_name":"echo","input":{"message":"AKIA1234567890ABCDEF"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+
+	server.handleToolExecute(rec, req.WithContext(context.Background()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	events, err := eventStore.QueryAll(context.Background())
+	if err != nil {
+		t.Fatalf("failed to query events: %v", err)
+	}
+
+	var found bool
+	for _, event := range events {
+		if event.EventType != "redaction_applied" {
+			continue
+		}
+		found = true
+		if strings.Contains(string(event.Payload), "AKIA1234567890ABCDEF") {
+			t.Fatalf("expected redaction event payload to be audit-safe")
+		}
+	}
+
+	if !found {
+		t.Fatalf("expected redaction_applied event to be emitted")
 	}
 }

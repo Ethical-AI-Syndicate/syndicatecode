@@ -44,6 +44,25 @@ func TestDetector_RedactMap(t *testing.T) {
 	}
 }
 
+func TestDetector_RedactMapWithReport(t *testing.T) {
+	detector := NewDetector()
+	input := map[string]interface{}{
+		"safe":   "hello",
+		"secret": "AKIA1234567890ABCDEF",
+	}
+
+	output, report := detector.RedactMapWithReport(input)
+	if !report.Applied {
+		t.Fatalf("expected report to indicate redaction applied")
+	}
+	if report.MatchCount < 1 {
+		t.Fatalf("expected at least one redaction match, got %d", report.MatchCount)
+	}
+	if output["secret"] == input["secret"] {
+		t.Fatalf("expected secret field to be redacted")
+	}
+}
+
 func TestDetector_ClassifyKnownCredentialFormats(t *testing.T) {
 	detector := NewDetector()
 	classification := detector.Classify("src/config/env.go", "file", "AWS key AKIA1234567890ABCDEF")

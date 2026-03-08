@@ -3,6 +3,7 @@ package secrets
 import (
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -42,6 +43,13 @@ type rule struct {
 
 type Detector struct {
 	rules []rule
+}
+
+type RedactionReport struct {
+	Applied        bool
+	MaterialImpact bool
+	MatchCount     int
+	Reasons        []string
 }
 
 func NewDetector() *Detector {
@@ -117,6 +125,55 @@ func (d *Detector) RedactMap(input map[string]interface{}) map[string]interface{
 	return output
 }
 
+func (d *Detector) RedactMapWithReport(input map[string]interface{}) (map[string]interface{}, RedactionReport) {
+	reasons := map[string]struct{}{}
+	matchCount := 0
+
+	output := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		switch typed := value.(type) {
+		case string:
+			matches := d.Scan(typed)
+			for _, match := range matches {
+				reasons[match.RuleName] = struct{}{}
+			}
+			matchCount += len(matches)
+			output[key] = d.RedactString(typed)
+		case map[string]interface{}:
+			nestedOutput, report := d.RedactMapWithReport(typed)
+			output[key] = nestedOutput
+			matchCount += report.MatchCount
+			for _, reason := range report.Reasons {
+				reasons[reason] = struct{}{}
+			}
+		case []interface{}:
+			nestedOutput, report := d.redactSliceWithReport(typed)
+			output[key] = nestedOutput
+			matchCount += report.MatchCount
+			for _, reason := range report.Reasons {
+				reasons[reason] = struct{}{}
+			}
+		default:
+			output[key] = value
+		}
+	}
+
+	reasonList := make([]string, 0, len(reasons))
+	for reason := range reasons {
+		reasonList = append(reasonList, reason)
+	}
+	sort.Strings(reasonList)
+
+	report := RedactionReport{
+		Applied:        matchCount > 0,
+		MaterialImpact: matchCount > 0,
+		MatchCount:     matchCount,
+		Reasons:        reasonList,
+	}
+
+	return output, report
+}
+
 func (d *Detector) redactSlice(input []interface{}) []interface{} {
 	output := make([]interface{}, 0, len(input))
 	for _, item := range input {
@@ -132,6 +189,55 @@ func (d *Detector) redactSlice(input []interface{}) []interface{} {
 		}
 	}
 	return output
+}
+
+func (d *Detector) redactSliceWithReport(input []interface{}) ([]interface{}, RedactionReport) {
+	reasons := map[string]struct{}{}
+	matchCount := 0
+
+	output := make([]interface{}, 0, len(input))
+	for _, item := range input {
+		switch typed := item.(type) {
+		case string:
+			matches := d.Scan(typed)
+			for _, match := range matches {
+				reasons[match.RuleName] = struct{}{}
+			}
+			matchCount += len(matches)
+			output = append(output, d.RedactString(typed))
+		case map[string]interface{}:
+			nestedOutput, report := d.RedactMapWithReport(typed)
+			output = append(output, nestedOutput)
+			matchCount += report.MatchCount
+			for _, reason := range report.Reasons {
+				reasons[reason] = struct{}{}
+			}
+		case []interface{}:
+			nestedOutput, report := d.redactSliceWithReport(typed)
+			output = append(output, nestedOutput)
+			matchCount += report.MatchCount
+			for _, reason := range report.Reasons {
+				reasons[reason] = struct{}{}
+			}
+		default:
+			output = append(output, item)
+		}
+	}
+
+	reasonList := make([]string, 0, len(reasons))
+	for reason := range reasons {
+		reasonList = append(reasonList, reason)
+	}
+	sort.Strings(reasonList)
+
+	report := RedactionReport{
+		Applied:        matchCount > 0,
+		MaterialImpact: matchCount > 0,
+		MatchCount:     matchCount,
+		Reasons:        reasonList,
+	}
+
+	return output, report
 }
 
 func RedactString(content string) string {

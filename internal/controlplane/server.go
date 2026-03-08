@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
@@ -569,7 +570,22 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if result.Output != nil {
-		result.Output = secrets.NewDetector().RedactMap(result.Output)
+		redactedOutput, report := secrets.NewDetector().RedactMapWithReport(result.Output)
+		result.Output = redactedOutput
+
+		if report.Applied {
+			result.RedactionNotice = &tools.RedactionNotice{
+				Applied:        report.Applied,
+				MaterialImpact: report.MaterialImpact,
+				MatchCount:     report.MatchCount,
+				Reasons:        report.Reasons,
+			}
+
+			if err := s.appendRedactionEvent(r.Context(), req.ToolName, report); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
 	}
 
 	if err := json.NewEncoder(w).Encode(result); err != nil {
@@ -583,4 +599,37 @@ func (s *Server) ListenAndServe() error {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *Server) appendRedactionEvent(ctx context.Context, toolName string, report secrets.RedactionReport) error {
+	if s.eventStore == nil {
+		return nil
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"tool_name":       toolName,
+		"applied":         report.Applied,
+		"material_impact": report.MaterialImpact,
+		"match_count":     report.MatchCount,
+		"reasons":         report.Reasons,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal redaction event payload: %w", err)
+	}
+
+	event := audit.Event{
+		ID:            uuid.NewString(),
+		SessionID:     "system",
+		Timestamp:     time.Now().UTC(),
+		EventType:     "redaction_applied",
+		Actor:         "system",
+		PolicyVersion: "1.0.0",
+		Payload:       payload,
+	}
+
+	if err := s.eventStore.Append(ctx, event); err != nil {
+		return fmt.Errorf("failed to append redaction event: %w", err)
+	}
+
+	return nil
 }

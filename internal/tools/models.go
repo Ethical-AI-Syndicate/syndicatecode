@@ -77,8 +77,16 @@ type ToolResult struct {
 	ID              string                 `json:"id"`
 	Success         bool                   `json:"success"`
 	Output          map[string]interface{} `json:"output"`
+	RedactionNotice *RedactionNotice       `json:"redaction_notice,omitempty"`
 	Error           string                 `json:"error,omitempty"`
 	Duration        int64                  `json:"duration_ms"`
 	Timeout         bool                   `json:"timeout,omitempty"`
 	OutputTruncated bool                   `json:"output_truncated,omitempty"`
+}
+
+type RedactionNotice struct {
+	Applied        bool     `json:"applied"`
+	MaterialImpact bool     `json:"material_impact"`
+	MatchCount     int      `json:"match_count"`
+	Reasons        []string `json:"reasons"`
 }
