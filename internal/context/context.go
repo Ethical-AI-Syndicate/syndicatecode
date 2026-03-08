@@ -63,7 +63,14 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		UpdatedAt: now,
 	}
 
-	payload, err := json.Marshal(map[string]string{"message": redactedMessage})
+	payload, err := json.Marshal(map[string]interface{}{
+		"message":              redactedMessage,
+		"redaction_action":     decision.Action,
+		"redaction_denied":     decision.Denied,
+		"redaction_reason":     decision.Reason,
+		"sensitivity_class":    decision.Classification.Class,
+		"classification_level": decision.Classification.Level,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +171,9 @@ type ContextFragment struct {
 	Sensitivity     string            `json:"sensitivity"`
 	FreshnessState  string            `json:"freshness_state"`
 	Conflicts       []ContextConflict `json:"conflicts,omitempty"`
+	RedactionAction string            `json:"redaction_action,omitempty"`
+	RedactionDenied bool              `json:"redaction_denied"`
+	RedactionReason string            `json:"redaction_reason,omitempty"`
 }
 
 type ContextConflict struct {
@@ -224,9 +234,17 @@ func (a *ContextAssembler) BuildPrompt() string {
 	policy := secrets.NewPolicyExecutor(nil)
 	for _, f := range a.fragments {
 		decision := policy.Apply(f.SourceRef, f.SourceType, f.Content, secrets.DestinationModelProvider)
+		f.RedactionAction = string(decision.Action)
+		f.RedactionDenied = decision.Denied
+		f.RedactionReason = decision.Reason
+		f.Sensitivity = string(decision.Classification.Class)
 		if decision.Denied {
+			f.Included = false
+			f.ExclusionReason = "policy_denied"
 			continue
 		}
+		f.Included = true
+		f.Content = decision.Content
 		parts = append(parts, decision.Content)
 	}
 
