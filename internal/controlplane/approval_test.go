@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
 
@@ -132,6 +133,11 @@ func TestHandleApprovalsAndDecision(t *testing.T) {
 
 func newApprovalTestServer(t *testing.T) *Server {
 	t.Helper()
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
 
 	registry := tools.NewRegistry()
 	if err := registry.Register(tools.ToolDefinition{
@@ -193,6 +199,7 @@ func newApprovalTestServer(t *testing.T) *Server {
 		approvalMgr:  NewApprovalManager(10 * time.Minute),
 		toolRegistry: registry,
 		toolExecutor: executor,
+		eventStore:   eventStore,
 		httpServer:   &http.Server{},
 	}
 }
@@ -246,5 +253,62 @@ func TestHandleToolExecuteRedactsSecrets(t *testing.T) {
 
 	if strings.Contains(rec.Body.String(), "AKIA1234567890ABCDEF") {
 		t.Fatalf("expected secret to be redacted, got %s", rec.Body.String())
+	}
+
+	var response struct {
+		Output           map[string]interface{} `json:"output"`
+		RedactionNotices []struct {
+			Action         string `json:"action"`
+			Denied         bool   `json:"denied"`
+			Reason         string `json:"reason"`
+			MaterialImpact bool   `json:"material_impact"`
+		} `json:"redaction_notices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode tool response: %v", err)
+	}
+	if len(response.RedactionNotices) == 0 {
+		t.Fatalf("expected redaction notices to be returned")
+	}
+	if response.RedactionNotices[0].Action == "" {
+		t.Fatalf("expected redaction notice action to be populated")
+	}
+	if !response.RedactionNotices[0].MaterialImpact {
+		t.Fatalf("expected redaction notice to mark material impact")
+	}
+}
+
+func TestHandleToolExecuteRecordsAuditSafeRedactionEvents(t *testing.T) {
+	server := newApprovalTestServer(t)
+	body := bytes.NewBufferString(`{"tool_name":"echo","input":{"message":"AKIA1234567890ABCDEF"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+
+	server.handleToolExecute(rec, req.WithContext(context.Background()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	events, err := server.eventStore.QueryBySession(context.Background(), redactionAuditSessionID)
+	if err != nil {
+		t.Fatalf("failed querying redaction events: %v", err)
+	}
+
+	found := false
+	for _, event := range events {
+		if event.EventType != "tool_output_redaction" {
+			continue
+		}
+		found = true
+		payload := string(event.Payload)
+		if strings.Contains(payload, "AKIA1234567890ABCDEF") {
+			t.Fatalf("expected audit payload to be secret-safe, got %s", payload)
+		}
+		if !strings.Contains(payload, "redaction_notices") {
+			t.Fatalf("expected audit payload to include redaction notices, got %s", payload)
+		}
+	}
+	if !found {
+		t.Fatalf("expected tool_output_redaction event to be recorded")
 	}
 }
