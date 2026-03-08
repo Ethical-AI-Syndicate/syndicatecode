@@ -15,7 +15,7 @@ type EventStore struct {
 }
 
 func NewEventStore(path string) (*EventStore, error) {
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_foreign_keys=on&_synchronous=NORMAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -29,24 +29,7 @@ func NewEventStore(path string) (*EventStore, error) {
 }
 
 func (s *EventStore) migrate() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS events (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		turn_id TEXT,
-		timestamp TEXT NOT NULL,
-		event_type TEXT NOT NULL,
-		actor TEXT NOT NULL,
-		policy_version TEXT,
-		trust_tier TEXT,
-		payload TEXT
-	);
-	
-	CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, timestamp);
-	CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, timestamp);
-	`
-	_, err := s.db.Exec(schema)
-	return err
+	return applyMigrations(s.db)
 }
 
 type Event struct {
