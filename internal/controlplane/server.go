@@ -488,7 +488,11 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Decision == "approve" {
-		if _, execErr := s.toolExecutor.Execute(r.Context(), approval.Call); execErr != nil {
+		result, execErr := s.toolExecutor.Execute(r.Context(), approval.Call)
+		if toolDef, ok := s.toolRegistry.Get(approval.Call.ToolName); ok {
+			s.recordMCPCallEvent(r.Context(), approval.Call, toolDef, result, execErr)
+		}
+		if execErr != nil {
 			http.Error(w, fmt.Sprintf("failed to execute approved action: %v", execErr), http.StatusInternalServerError)
 			return
 		}
@@ -583,6 +587,11 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateMCPDestination(toolDef, req.Input); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
 	if requiresApproval(toolDef) {
 		approval, err := s.approvalMgr.Propose("", req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
 		if err != nil {
@@ -597,6 +606,7 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.toolExecutor.Execute(r.Context(), req)
+	s.recordMCPCallEvent(r.Context(), req, toolDef, result, err)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -657,6 +667,90 @@ func validateToolDataAccess(toolDef tools.ToolDefinition, input map[string]inter
 	default:
 		return fmt.Errorf("plugin tool %s has invalid data access scope %s", toolDef.Name, scope)
 	}
+}
+
+func validateMCPDestination(toolDef tools.ToolDefinition, input map[string]interface{}) error {
+	if toolDef.MCP == nil || toolDef.MCP.Transport != "remote" {
+		return nil
+	}
+
+	rawDestination, ok := input["destination"]
+	if !ok {
+		return fmt.Errorf("remote mcp tool %s requires destination", toolDef.Name)
+	}
+	destination, ok := rawDestination.(string)
+	if !ok || strings.TrimSpace(destination) == "" {
+		return fmt.Errorf("remote mcp tool %s requires destination", toolDef.Name)
+	}
+
+	for _, allowed := range toolDef.MCP.AllowedDestinations {
+		if destination == allowed {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("destination %s is not allowed for remote mcp tool %s", destination, toolDef.Name)
+}
+
+func (s *Server) recordMCPCallEvent(ctx context.Context, req tools.ExecuteRequest, toolDef tools.ToolDefinition, result *tools.ToolResult, execErr error) {
+	if s.eventStore == nil || toolDef.MCP == nil {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"tool_name":    req.ToolName,
+		"session_id":   req.SessionID,
+		"server_id":    toolDef.MCP.ServerID,
+		"transport":    toolDef.MCP.Transport,
+		"destination":  requestDestination(req.Input),
+		"request":      req.Input,
+		"response":     responseMetadata(result, execErr),
+		"policy_event": "mcp_transport_v1",
+	}
+
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("failed to marshal mcp.call event payload: %v", err)
+		return
+	}
+
+	err = s.eventStore.Append(ctx, audit.Event{
+		ID:        uuid.NewString(),
+		SessionID: req.SessionID,
+		Timestamp: time.Now().UTC(),
+		EventType: "mcp.call",
+		Actor:     "controlplane",
+		Payload:   encodedPayload,
+	})
+	if err != nil {
+		log.Printf("failed to append mcp.call event: %v", err)
+	}
+}
+
+func requestDestination(input map[string]interface{}) string {
+	rawDestination, ok := input["destination"]
+	if !ok {
+		return ""
+	}
+	destination, ok := rawDestination.(string)
+	if !ok {
+		return ""
+	}
+	return destination
+}
+
+func responseMetadata(result *tools.ToolResult, execErr error) map[string]interface{} {
+	response := map[string]interface{}{
+		"success": result != nil && result.Success,
+	}
+	if result != nil {
+		response["duration_ms"] = result.Duration
+		response["output"] = result.Output
+	}
+	if execErr != nil {
+		response["error"] = execErr.Error()
+	}
+	return response
 }
 
 func (s *Server) isToolHiddenForSession(ctx context.Context, sessionID string, toolDef tools.ToolDefinition) (bool, error) {
