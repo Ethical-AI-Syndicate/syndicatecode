@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 type EventStore struct {
-	db *sql.DB
+	db    *sql.DB
+	dbDir string
 }
 
 func NewEventStore(path string) (*EventStore, error) {
@@ -20,7 +22,7 @@ func NewEventStore(path string) (*EventStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	store := &EventStore{db: db}
+	store := &EventStore{db: db, dbDir: filepath.Dir(path)}
 	if err := store.migrate(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
@@ -44,6 +46,22 @@ func (s *EventStore) migrate() error {
 	
 	CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, timestamp);
 	CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, timestamp);
+
+	CREATE TABLE IF NOT EXISTS artifact_blobs (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		turn_id TEXT,
+		uri TEXT NOT NULL,
+		size_bytes INTEGER NOT NULL,
+		sha256 TEXT NOT NULL,
+		redaction_state TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		expires_at TEXT,
+		tombstoned_at TEXT
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_artifact_blobs_expires ON artifact_blobs(expires_at);
+	CREATE INDEX IF NOT EXISTS idx_artifact_blobs_session_created ON artifact_blobs(session_id, created_at);
 	`
 	_, err := s.db.Exec(schema)
 	return err
