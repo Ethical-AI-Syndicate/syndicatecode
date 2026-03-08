@@ -2,6 +2,7 @@ package context
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -236,6 +237,132 @@ func TestContextAssembler_BuildPromptAppliesModelProviderPolicy(t *testing.T) {
 
 	if strings.Contains(prompt, "AKIA1234567890ABCDEF") {
 		t.Fatalf("expected prompt egress policy to remove raw secret")
+	}
+}
+
+func TestContextAssembler_BuildPromptTracksDeniedFragmentState(t *testing.T) {
+	assembler := NewContextAssembler(1000)
+	fragment := &ContextFragment{
+		SourceType: "file",
+		SourceRef:  "src/keys.txt",
+		Content:    "AWS key AKIA1234567890ABCDEF",
+		TokenCount: 12,
+	}
+
+	_ = assembler.AddFragment(fragment)
+	prompt := assembler.BuildPrompt()
+
+	if prompt != "" {
+		t.Fatalf("expected denied fragment to be excluded from prompt")
+	}
+	if fragment.Included {
+		t.Fatalf("expected denied fragment to be marked excluded")
+	}
+	if fragment.ExclusionReason != "policy_denied" {
+		t.Fatalf("expected policy_denied exclusion reason, got %s", fragment.ExclusionReason)
+	}
+	if fragment.RedactionAction != "deny" {
+		t.Fatalf("expected redaction action deny, got %s", fragment.RedactionAction)
+	}
+	if fragment.Sensitivity != "A" {
+		t.Fatalf("expected sensitivity class A, got %s", fragment.Sensitivity)
+	}
+}
+
+func TestTurnManager_CreatePersistsRedactionMetadata(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManager(eventStore, sessionMgr)
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	turn, err := turnMgr.Create(ctx, sess.ID, "my key is AKIA1234567890ABCDEF")
+	if err != nil {
+		t.Fatalf("failed to create turn: %v", err)
+	}
+	if strings.Contains(turn.Message, "AKIA1234567890ABCDEF") {
+		t.Fatalf("expected persisted turn message to be sanitized")
+	}
+
+	events, err := eventStore.QueryBySession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("failed to query events: %v", err)
+	}
+
+	var payload map[string]interface{}
+	for _, event := range events {
+		if event.EventType != "turn_started" {
+			continue
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("failed to decode payload: %v", err)
+		}
+	}
+
+	if payload["redaction_action"] != "hash" {
+		t.Fatalf("expected redaction_action hash, got %v", payload["redaction_action"])
+	}
+	if payload["sensitivity_class"] != "A" {
+		t.Fatalf("expected sensitivity_class A, got %v", payload["sensitivity_class"])
+	}
+	if payload["redaction_denied"] != false {
+		t.Fatalf("expected redaction_denied false, got %v", payload["redaction_denied"])
+	}
+}
+
+func TestContextManifest_RecordPreservesRedactionState(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	manifest := NewContextManifest(eventStore)
+	ctx := context.Background()
+
+	fragments := []ContextFragment{
+		{
+			SourceType:      "file",
+			SourceRef:       "secrets.txt",
+			Content:         "[DENIED]",
+			TokenCount:      12,
+			Included:        false,
+			ExclusionReason: "policy_denied",
+			Sensitivity:     "A",
+			RedactionAction: "deny",
+			RedactionDenied: true,
+			RedactionReason: "A policy for model_provider destination",
+		},
+	}
+
+	if err := manifest.Record(ctx, "s1", "t1", fragments); err != nil {
+		t.Fatalf("failed to record manifest: %v", err)
+	}
+
+	retrieved, err := manifest.Get(ctx, "t1")
+	if err != nil {
+		t.Fatalf("failed to read manifest: %v", err)
+	}
+	if len(retrieved) != 1 {
+		t.Fatalf("expected one fragment, got %d", len(retrieved))
+	}
+	if retrieved[0].RedactionAction != "deny" {
+		t.Fatalf("expected redaction action to roundtrip, got %s", retrieved[0].RedactionAction)
+	}
+	if !retrieved[0].RedactionDenied {
+		t.Fatalf("expected denied redaction flag to roundtrip")
+	}
+	if retrieved[0].ExclusionReason != "policy_denied" {
+		t.Fatalf("expected exclusion reason to roundtrip, got %s", retrieved[0].ExclusionReason)
 	}
 }
 
