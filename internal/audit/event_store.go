@@ -20,6 +20,10 @@ func NewEventStore(path string) (*EventStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
 	store := &EventStore{db: db}
 	if err := store.migrate(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -30,6 +34,147 @@ func NewEventStore(path string) (*EventStore, error) {
 
 func (s *EventStore) migrate() error {
 	schema := `
+	PRAGMA foreign_keys = ON;
+
+	CREATE TABLE IF NOT EXISTS sessions (
+		id TEXT PRIMARY KEY,
+		repo_path TEXT NOT NULL,
+		trust_tier TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status, updated_at);
+
+	CREATE TABLE IF NOT EXISTS turns (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		message TEXT,
+		status TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS approvals (
+		id TEXT PRIMARY KEY,
+		session_id TEXT,
+		turn_id TEXT,
+		tool_name TEXT NOT NULL,
+		state TEXT NOT NULL,
+		decision_reason TEXT,
+		arguments_hash TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, created_at);
+	CREATE INDEX IF NOT EXISTS idx_approvals_state ON approvals(state, updated_at);
+
+	CREATE TABLE IF NOT EXISTS tool_invocations (
+		id TEXT PRIMARY KEY,
+		session_id TEXT,
+		turn_id TEXT,
+		approval_id TEXT,
+		tool_name TEXT NOT NULL,
+		success INTEGER NOT NULL,
+		duration_ms INTEGER NOT NULL,
+		output_ref TEXT,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL,
+		FOREIGN KEY(approval_id) REFERENCES approvals(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_tool_invocations_session ON tool_invocations(session_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS model_invocations (
+		id TEXT PRIMARY KEY,
+		session_id TEXT,
+		turn_id TEXT,
+		provider TEXT NOT NULL,
+		model TEXT NOT NULL,
+		routing_policy TEXT,
+		prompt_ref TEXT,
+		response_ref TEXT,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_model_invocations_session ON model_invocations(session_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS context_fragments (
+		id TEXT PRIMARY KEY,
+		session_id TEXT,
+		turn_id TEXT,
+		source_type TEXT NOT NULL,
+		source_ref TEXT,
+		included INTEGER NOT NULL,
+		exclusion_reason TEXT,
+		sensitivity TEXT,
+		redaction_action TEXT,
+		redaction_denied INTEGER NOT NULL,
+		content_ref TEXT,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_context_fragments_turn ON context_fragments(turn_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS patch_proposals (
+		id TEXT PRIMARY KEY,
+		session_id TEXT,
+		turn_id TEXT,
+		proposal_ref TEXT,
+		status TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_patch_proposals_turn ON patch_proposals(turn_id, created_at);
+
+	CREATE TABLE IF NOT EXISTS file_mutations (
+		id TEXT PRIMARY KEY,
+		session_id TEXT,
+		turn_id TEXT,
+		patch_id TEXT,
+		path TEXT NOT NULL,
+		mutation_type TEXT NOT NULL,
+		before_hash TEXT,
+		after_hash TEXT,
+		applied_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL,
+		FOREIGN KEY(patch_id) REFERENCES patch_proposals(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_file_mutations_turn ON file_mutations(turn_id, applied_at);
+
+	CREATE TABLE IF NOT EXISTS artifacts (
+		id TEXT PRIMARY KEY,
+		session_id TEXT,
+		turn_id TEXT,
+		kind TEXT NOT NULL,
+		storage_path TEXT NOT NULL,
+		sha256 TEXT,
+		redaction_state TEXT,
+		expires_at TEXT,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at);
+
 	CREATE TABLE IF NOT EXISTS events (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
