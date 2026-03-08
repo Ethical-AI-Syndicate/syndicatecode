@@ -568,6 +568,16 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hidden, err := s.isToolHiddenForSession(r.Context(), req.SessionID, toolDef)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if hidden {
+		http.Error(w, "tool not found", http.StatusNotFound)
+		return
+	}
+
 	if toolDef.ApprovalRequired {
 		approval, err := s.approvalMgr.Propose("", req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
 		if err != nil {
@@ -597,6 +607,51 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(toolExecuteResponse{ToolResult: result, RedactionNotices: notices}); err != nil {
 		log.Printf("failed to encode tool response: %v", err)
 	}
+}
+
+func (s *Server) isToolHiddenForSession(ctx context.Context, sessionID string, toolDef tools.ToolDefinition) (bool, error) {
+	if toolDef.Source != tools.ToolSourcePlugin {
+		return false, nil
+	}
+
+	if s.sessionMgr == nil || sessionID == "" {
+		return true, nil
+	}
+
+	sessionState, err := s.sessionMgr.Get(ctx, sessionID)
+	if err != nil {
+		if err == session.ErrSessionNotFound {
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to resolve session for plugin exposure policy: %w", err)
+	}
+
+	return !isPluginExposedForTrustTier(sessionState.TrustTier, toolDef.TrustLevel), nil
+}
+
+func isPluginExposedForTrustTier(sessionTrustTier, pluginTrustLevel string) bool {
+	if sessionTrustTier == "tier3" {
+		return false
+	}
+
+	return isTrustTierAtLeast(pluginTrustLevel, sessionTrustTier)
+}
+
+func isTrustTierAtLeast(candidate, required string) bool {
+	ranking := map[string]int{
+		"tier0": 0,
+		"tier1": 1,
+		"tier2": 2,
+		"tier3": 3,
+	}
+
+	candidateRank, candidateOK := ranking[candidate]
+	requiredRank, requiredOK := ranking[required]
+	if !candidateOK || !requiredOK {
+		return false
+	}
+
+	return candidateRank >= requiredRank
 }
 
 func applyRedactionPolicyWithNotices(policy *secrets.PolicyExecutor, path, sourceType string, destination secrets.Destination, input map[string]interface{}) (map[string]interface{}, []redactionNotice) {
