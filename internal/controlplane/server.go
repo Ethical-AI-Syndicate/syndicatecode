@@ -97,6 +97,10 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 		toolExecutor: toolExecutor,
 	}
 
+	if err := server.restoreRuntimeState(ctx); err != nil {
+		return nil, fmt.Errorf("failed to restore runtime state: %w", err)
+	}
+
 	server.registerRoutes(mux)
 
 	return server, nil
@@ -508,6 +512,15 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.appendApprovalEvent(r.Context(), "approval_decided", approval.SessionID, map[string]string{
+		"approval_id": approval.ID,
+		"decision":    req.Decision,
+		"reason":      req.Reason,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if req.Decision == "approve" {
 		result, execErr := s.toolExecutor.Execute(r.Context(), approval.Call)
 		if toolDef, ok := s.toolRegistry.Get(approval.Call.ToolName); ok {
@@ -524,6 +537,13 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 		updated, ok := s.approvalMgr.Get(approvalID)
 		if ok {
 			approval = &updated
+		}
+
+		if err := s.appendApprovalEvent(r.Context(), "approval_executed", approval.SessionID, map[string]string{
+			"approval_id": approval.ID,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -617,6 +637,10 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		approval, err := s.approvalMgr.Propose(req.SessionID, req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.appendApprovalEvent(r.Context(), "approval_proposed", approval.SessionID, approval); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
