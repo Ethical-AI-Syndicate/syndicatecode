@@ -85,7 +85,9 @@ func (s *EventStore) QueryBySession(ctx context.Context, sessionID string) ([]Ev
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	return s.scanRows(rows)
 }
@@ -98,7 +100,9 @@ func (s *EventStore) QueryAll(ctx context.Context) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	return s.scanRows(rows)
 }
@@ -115,7 +119,10 @@ func (s *EventStore) scanRows(rows *sql.Rows) ([]Event, error) {
 			return nil, err
 		}
 
-		e.Timestamp, _ = time.Parse(time.RFC3339, timestampStr)
+		e.Timestamp, err = time.Parse(time.RFC3339, timestampStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse event timestamp %q: %w", timestampStr, err)
+		}
 		e.Payload = payload
 		events = append(events, e)
 	}
