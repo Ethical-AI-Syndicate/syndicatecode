@@ -33,6 +33,12 @@ type SecurityMetadata struct {
 	FilesystemScope string `json:"filesystem_scope"`
 }
 
+type MCPMetadata struct {
+	ServerID            string   `json:"server_id"`
+	Transport           string   `json:"transport"`
+	AllowedDestinations []string `json:"allowed_destinations,omitempty"`
+}
+
 type ToolDefinition struct {
 	Name             string                 `json:"name"`
 	Version          string                 `json:"version"`
@@ -45,6 +51,7 @@ type ToolDefinition struct {
 	OutputSchema     map[string]FieldSchema `json:"output_schema"`
 	Limits           ExecutionLimits        `json:"limits"`
 	Security         SecurityMetadata       `json:"security,omitempty"`
+	MCP              *MCPMetadata           `json:"mcp,omitempty"`
 }
 
 const (

@@ -35,8 +35,9 @@ type ApprovalDefaults struct {
 
 type ManifestTool struct {
 	tools.ToolDefinition
-	DataAccessClass string `json:"data_access_class"`
-	NetworkScope    string `json:"network_scope"`
+	DataAccessClass string             `json:"data_access_class"`
+	NetworkScope    string             `json:"network_scope"`
+	MCP             *tools.MCPMetadata `json:"mcp,omitempty"`
 }
 
 type rawPluginManifest struct {
@@ -203,6 +204,14 @@ func toPlugin(raw rawPluginManifest) (*Plugin, error) {
 			NetworkAccess:   toolDef.NetworkScope != "none",
 			FilesystemScope: toolDef.DataAccessClass,
 		}
+		if toolDef.MCP != nil {
+			if err := validateMCPMetadata(*toolDef.MCP, toolDef.NetworkScope, toolDef.Name); err != nil {
+				return nil, err
+			}
+			metadataCopy := *toolDef.MCP
+			metadataCopy.AllowedDestinations = append([]string(nil), toolDef.MCP.AllowedDestinations...)
+			tool.MCP = &metadataCopy
+		}
 		if !tool.ApprovalRequired {
 			tool.ApprovalRequired = approvalDefaultForSideEffect(raw.Defaults, tool.SideEffect)
 		}
@@ -251,6 +260,29 @@ func isValidNetworkScope(value string) bool {
 	default:
 		return false
 	}
+}
+
+func validateMCPMetadata(metadata tools.MCPMetadata, networkScope, toolName string) error {
+	if metadata.ServerID == "" {
+		return fmt.Errorf("tool %s mcp.server_id is required", toolName)
+	}
+	if metadata.Transport != "local" && metadata.Transport != "remote" {
+		return fmt.Errorf("tool %s has invalid mcp.transport %s", toolName, metadata.Transport)
+	}
+	if metadata.Transport == "remote" {
+		if networkScope == "none" {
+			return fmt.Errorf("tool %s remote mcp transport requires network access", toolName)
+		}
+		if len(metadata.AllowedDestinations) == 0 {
+			return fmt.Errorf("tool %s remote mcp transport requires allowed_destinations", toolName)
+		}
+	}
+	for _, destination := range metadata.AllowedDestinations {
+		if strings.TrimSpace(destination) == "" {
+			return fmt.Errorf("tool %s mcp.allowed_destinations cannot contain empty values", toolName)
+		}
+	}
+	return nil
 }
 
 type ExtensionInventory struct {
