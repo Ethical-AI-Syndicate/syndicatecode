@@ -2,8 +2,10 @@ package context
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"sort"
 	"strings"
@@ -11,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
-	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
 
@@ -32,15 +33,56 @@ type Turn struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+type RedactionDecision struct {
+	Content             string
+	Action              string
+	Denied              bool
+	Reason              string
+	Sensitivity         string
+	ClassificationLevel string
+}
+
+type RedactorFunc func(sourceRef, sourceType, content string) RedactionDecision
+
+func defaultPersistenceRedactor(_ string, _ string, content string) RedactionDecision {
+	hash := sha256.Sum256([]byte(content))
+	return RedactionDecision{
+		Content:     fmt.Sprintf("sha256:%x", hash),
+		Action:      "hash",
+		Sensitivity: "unknown",
+		Reason:      "default persistence safeguard",
+	}
+}
+
+func defaultModelProviderRedactor(_ string, _ string, _ string) RedactionDecision {
+	return RedactionDecision{
+		Content:     "",
+		Action:      "deny",
+		Denied:      true,
+		Reason:      "default model provider safeguard",
+		Sensitivity: "unknown",
+	}
+}
+
 type TurnManager struct {
 	eventStore *audit.EventStore
 	sessionMgr *session.Manager
+	redactor   RedactorFunc
 }
 
 func NewTurnManager(eventStore *audit.EventStore, sessionMgr *session.Manager) *TurnManager {
+	return NewTurnManagerWithRedactor(eventStore, sessionMgr, defaultPersistenceRedactor)
+}
+
+func NewTurnManagerWithRedactor(eventStore *audit.EventStore, sessionMgr *session.Manager, redactor RedactorFunc) *TurnManager {
+	if redactor == nil {
+		redactor = defaultPersistenceRedactor
+	}
+
 	return &TurnManager{
 		eventStore: eventStore,
 		sessionMgr: sessionMgr,
+		redactor:   redactor,
 	}
 }
 
@@ -51,7 +93,7 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		return nil, err
 	}
 
-	decision := secrets.NewPolicyExecutor(nil).Apply("turn.message", "user_input", message, secrets.DestinationPersistence)
+	decision := m.redactor("turn.message", "user_input", message)
 	redactedMessage := decision.Content
 	now := time.Now()
 	turn := &Turn{
@@ -68,8 +110,8 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		"redaction_action":     decision.Action,
 		"redaction_denied":     decision.Denied,
 		"redaction_reason":     decision.Reason,
-		"sensitivity_class":    decision.Classification.Class,
-		"classification_level": decision.Classification.Level,
+		"sensitivity_class":    decision.Sensitivity,
+		"classification_level": decision.ClassificationLevel,
 	})
 	if err != nil {
 		return nil, err
@@ -185,13 +227,23 @@ type ContextConflict struct {
 type ContextAssembler struct {
 	budget    int
 	fragments []*ContextFragment
+	redactor  RedactorFunc
 }
 
 // NewContextAssembler creates a new context assembler with the given token budget
 func NewContextAssembler(budget int) *ContextAssembler {
+	return NewContextAssemblerWithRedactor(budget, defaultModelProviderRedactor)
+}
+
+func NewContextAssemblerWithRedactor(budget int, redactor RedactorFunc) *ContextAssembler {
+	if redactor == nil {
+		redactor = defaultModelProviderRedactor
+	}
+
 	return &ContextAssembler{
 		budget:    budget,
 		fragments: make([]*ContextFragment, 0),
+		redactor:  redactor,
 	}
 }
 
@@ -231,13 +283,12 @@ func (a *ContextAssembler) BuildPrompt() string {
 	})
 
 	var parts []string
-	policy := secrets.NewPolicyExecutor(nil)
 	for _, f := range a.fragments {
-		decision := policy.Apply(f.SourceRef, f.SourceType, f.Content, secrets.DestinationModelProvider)
-		f.RedactionAction = string(decision.Action)
+		decision := a.redactor(f.SourceRef, f.SourceType, f.Content)
+		f.RedactionAction = decision.Action
 		f.RedactionDenied = decision.Denied
 		f.RedactionReason = decision.Reason
-		f.Sensitivity = string(decision.Classification.Class)
+		f.Sensitivity = decision.Sensitivity
 		if decision.Denied {
 			f.Included = false
 			f.ExclusionReason = "policy_denied"
