@@ -235,16 +235,28 @@ func TestContextManifest_Record(t *testing.T) {
 		{
 			SourceType:      "file",
 			SourceRef:       "src/main.go",
+			Content:         "package main",
 			TokenCount:      100,
+			Included:        true,
 			Truncated:       false,
 			InclusionReason: "user_requested",
+			Sensitivity:     "none",
+			FreshnessState:  "fresh",
+			Conflicts: []ContextConflict{
+				{WithSourceRef: "HEAD~1:src/main.go", Reason: "content_mismatch"},
+			},
 		},
 		{
 			SourceType:      "git",
 			SourceRef:       "HEAD",
+			Content:         "diff --git",
 			TokenCount:      50,
+			Included:        false,
+			ExclusionReason: "lower_priority",
 			Truncated:       false,
 			InclusionReason: "auto",
+			Sensitivity:     "internal",
+			FreshnessState:  "stale",
 		},
 	}
 
@@ -260,6 +272,21 @@ func TestContextManifest_Record(t *testing.T) {
 
 	if len(retrieved) != 2 {
 		t.Errorf("expected 2 fragments, got %d", len(retrieved))
+	}
+	if !retrieved[0].Included {
+		t.Fatal("expected first fragment to be included")
+	}
+	if retrieved[1].Included {
+		t.Fatal("expected second fragment to be excluded")
+	}
+	if retrieved[1].ExclusionReason != "lower_priority" {
+		t.Fatalf("unexpected exclusion reason: %s", retrieved[1].ExclusionReason)
+	}
+	if retrieved[0].FreshnessState != "fresh" {
+		t.Fatalf("unexpected freshness state: %s", retrieved[0].FreshnessState)
+	}
+	if len(retrieved[0].Conflicts) != 1 {
+		t.Fatalf("expected one conflict record, got %d", len(retrieved[0].Conflicts))
 	}
 }
 
