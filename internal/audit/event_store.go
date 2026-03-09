@@ -174,6 +174,7 @@ func (s *EventStore) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at);
+	CREATE INDEX IF NOT EXISTS idx_artifacts_expires ON artifacts(expires_at) WHERE expires_at IS NOT NULL;
 
 	CREATE TABLE IF NOT EXISTS events (
 		id TEXT PRIMARY KEY,
@@ -207,12 +208,12 @@ type Event struct {
 }
 
 func (s *EventStore) Append(ctx context.Context, event Event) error {
-	payload, err := json.Marshal(event.Payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
+	payload := []byte(event.Payload)
+	if len(payload) == 0 {
+		payload = []byte("null")
 	}
 
-	_, err = s.db.ExecContext(ctx,
+	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO events (id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload) 
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.ID, event.SessionID, event.TurnID, event.Timestamp.Format(time.RFC3339),
