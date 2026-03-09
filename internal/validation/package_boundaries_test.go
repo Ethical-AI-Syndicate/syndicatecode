@@ -1,6 +1,12 @@
 package validation
 
-import "testing"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestDefaultPackageBoundarySpecIncludesCorePackages(t *testing.T) {
 	t.Parallel()
@@ -44,4 +50,50 @@ func TestValidateCoverageDetectsMissingPackageBoundary(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected missing package boundary error")
 	}
+}
+
+func TestDefaultPackageBoundarySpecCoversAllFirstPartyPackages(t *testing.T) {
+	t.Parallel()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+
+	moduleRoot, err := findModuleRoot(wd)
+	if err != nil {
+		t.Fatalf("failed to resolve module root: %v", err)
+	}
+
+	spec := DefaultPackageBoundarySpec()
+	packages := mustListFirstPartyPackages(t, moduleRoot)
+
+	if err := spec.ValidateCoverage(packages); err != nil {
+		t.Fatalf("expected full package boundary coverage, got %v", err)
+	}
+}
+
+func mustListFirstPartyPackages(t *testing.T, moduleRoot string) []string {
+	t.Helper()
+
+	cmd := exec.Command("go", "list", "-f", "{{.ImportPath}}", "./cmd/...", "./internal/...", "./pkg/...")
+	cmd.Dir = moduleRoot
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("failed to list first-party packages: %v", err)
+	}
+
+	prefix := "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/"
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	packages := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		pkg := strings.TrimPrefix(strings.TrimSpace(line), prefix)
+		pkg = filepath.ToSlash(pkg)
+		packages = append(packages, pkg)
+	}
+
+	return packages
 }

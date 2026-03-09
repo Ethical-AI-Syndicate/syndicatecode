@@ -20,7 +20,7 @@ func (b BoundarySpec) ValidateImports(pkg string, imports []string) ([]ImportVio
 
 	violations := make([]ImportViolation, 0)
 	for _, importPath := range imports {
-		if !strings.HasPrefix(importPath, "internal/") && !strings.HasPrefix(importPath, "cmd/") {
+		if !strings.HasPrefix(importPath, "internal/") && !strings.HasPrefix(importPath, "cmd/") && !strings.HasPrefix(importPath, "pkg/") {
 			continue
 		}
 
