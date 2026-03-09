@@ -1,0 +1,83 @@
+{
+  "bead_id": "l3d.10.2",
+  "bead_issue_id": "bead-l3d-10-2-export-pipeline-l3d.10.2",
+  "generated_at_utc": "2026-03-09T19:45:33Z",
+  "generator_version": "v2",
+  "head_sha": "7977104dbe5cfa77bc6bc322fb9baee4b7cdbaa6",
+  "range": "origin/master..HEAD",
+  "commits": [
+    {
+      "sha": "3c1e7b06e46fe0464bda9cb9132748fcd8651591",
+      "subject": "chore(export): merge master updates [l3d.10.2]",
+      "beads": [
+        "l3d.10.2"
+      ]
+    },
+    {
+      "sha": "1e01b97e071884436ef585303889f82fd8857b17",
+      "subject": "test(controlplane): add bead-tagged export coverage [l3d.10.2]",
+      "beads": [
+        "l3d.10.2"
+      ]
+    },
+    {
+      "sha": "d7664e2995d263b713ab847c55a4fd24039c667a",
+      "subject": "Merge origin/master into bead/l3d.10.2-export-pipeline",
+      "beads": [
+        "l3d.10.2"
+      ]
+    },
+    {
+      "sha": "0336f8916bdb2aeaf76a35e20781079d73ed9f74",
+      "subject": "bd:l3d.10.2 implement explicit session export filtering pipeline",
+      "beads": [
+        "l3d.10.2"
+      ]
+    }
+  ],
+  "changed_files": [
+    "internal/controlplane/replay_test.go",
+    "internal/controlplane/server.go",
+    "internal/controlplane/server_test.go",
+    "tools/beads/main.go",
+    "tools/beads/main_test.go",
+    "tools/verify/main.go"
+  ],
+  "changed_go_files": [
+    "internal/controlplane/server.go",
+    "tools/beads/main.go",
+    "tools/verify/main.go"
+  ],
+  "changed_test_files": [
+    "internal/controlplane/replay_test.go",
+    "internal/controlplane/server_test.go",
+    "tools/beads/main_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/controlplane/server_test.go",
+      "line": 19,
+      "test_name": "TestHandleSessionByID_ExportPipeline_Bead_l3d_10_2",
+      "beads": [
+        "l3d.10.2"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": true,
+    "reasons": null
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
