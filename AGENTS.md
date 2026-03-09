@@ -123,7 +123,125 @@ logger.Info("tool execution started",
 
 ---
 
-## Architecture Guidelines
+## Part 12: Bead-Driven Delivery Enforcement
+
+This section defines the enforcement system that ensures all work is traceable to beads, tested, and verifiable before delivery.
+
+### Bead Identity Model
+
+**Bead ID Format:** `l3d.X` or `bd-X` (e.g., `l3d.1`, `bd-42`)
+
+**Canonical Form:** Always use lowercase `l3d.X` format in commits and branch names.
+
+### Traceability Rules
+
+1. **Commit messages MUST contain bead IDs**
+   - Format: `<type>(<scope>): <description> [l3d.X]`
+   - Example: `feat(state): add lifecycle transitions [l3d.1]`
+
+2. **Branch names SHOULD contain bead IDs (optional)**
+   - Format: `feature/l3d-1-description` or `agent/bd-l3d-1-1`
+
+3. **PR descriptions MUST reference beads**
+   - Include bead ID in title or description
+   - Link acceptance criteria to bead
+
+### Test Linkage Requirements
+
+**All changed Go source files MUST have corresponding test files.**
+
+For each `*.go` file modified:
+- There MUST be a `*_test.go` file in the same package
+- Tests MUST verify the changed behavior
+- Test names MAY include bead ID: `TestFeature_Bead_l3d_1_Description`
+
+### Evidence Generation
+
+**Every bead MUST have an evidence artifact.**
+
+Evidence is generated automatically by CI but can also be generated locally:
+
+```bash
+# Generate evidence for a bead
+go run ./tools/beads generate-evidence --bead l3d.1 --range origin/master..HEAD \
+  --phase format=pass --phase lint=pass --phase test=pass --phase build=pass \
+  --phase bead-verify=pass --phase security=pass
+
+# Verify current changes have proper bead linkage
+go run ./tools/beads verify --range origin/master..HEAD --strict
+
+# Verify commits in range have bead references
+go run ./tools/beads verify-commits --range HEAD~5..HEAD --strict
+
+# Verify PR metadata includes bead governance sections
+go run ./tools/beads verify-pr --strict --title "$CI_MERGE_REQUEST_TITLE" --description "$CI_MERGE_REQUEST_DESCRIPTION"
+```
+
+Evidence artifacts are stored in `bead-evidence/` directory as JSON files.
+
+### CI Phase Model
+
+The CI pipeline enforces these phases in order:
+
+1. **format** - gofmt check for all tracked Go files
+2. **lint** - Run golangci-lint
+3. **test** - Run tests with race detector
+4. **build** - Compile all binaries and run `go vet`
+5. **bead-verify** - Verify commit traceability, change-to-test linkage, and PR metadata
+6. **security** - Run gosec security scan
+7. **evidence** - Generate per-bead evidence artifacts and verify closure eligibility
+
+**A merge request MUST pass all phases.**
+
+### Closure Verification
+
+A bead is eligible for closure ONLY when:
+
+1. Evidence artifact exists in `bead-evidence/l3d.X.json`
+2. Linked commits for that bead are present in evidence
+3. Linked bead-tagged tests are present in evidence
+4. Evidence shows passing format, lint, test, build, bead-verify, and security phases
+5. `bd show SyndicateCode-l3d.X --json` resolves and the issue status is not already closed
+
+```bash
+# Check if bead is eligible for closure
+go run ./tools/beads check-closure --bead l3d.1
+```
+
+### Local Verification Workflow
+
+Before pushing, run:
+
+```bash
+# 1. Run canonical local verifier (human-readable)
+make verify RANGE=origin/master..HEAD
+
+# 2. Run canonical local verifier (machine-readable)
+make verify-json RANGE=origin/master..HEAD
+
+# 3. Verify bead traceability directly (diagnostics)
+go run ./tools/beads verify --range origin/master..HEAD --strict
+
+# 4. Generate evidence for your bead
+go run ./tools/beads generate-evidence --bead l3d.X --range origin/master..HEAD \
+  --phase format=pass --phase lint=pass --phase test=pass --phase build=pass \
+  --phase bead-verify=pass --phase security=pass
+
+# 5. Verify closure eligibility from local evidence
+go run ./tools/beads check-closure --bead l3d.X
+```
+
+### Prohibited Behaviors
+
+- **NEVER** commit without bead reference in message
+- **NEVER** merge without passing bead-verify CI stage
+- **NEVER** close bead without evidence artifact
+- **NEVER** skip test coverage for changed files
+- **NEVER** weaken validation to pass tests
+
+---
+
+## Appendix: Architecture
 
 ### Repository Layout
 

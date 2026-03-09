@@ -6,3 +6,6 @@
 # Git worktrees
 .worktrees/
 worktrees/
+
+# Local build artifacts
+bin/cli
