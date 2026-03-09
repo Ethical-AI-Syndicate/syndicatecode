@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -354,7 +355,7 @@ func runGenerateEvidence(opts options) error {
 	}
 	evidence.Summary = evaluateEvidence(evidence)
 
-	if err := os.MkdirAll(opts.evidenceDir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.evidenceDir, 0o750); err != nil {
 		return err
 	}
 	path := filepath.Join(opts.evidenceDir, opts.beadID+".json")
@@ -362,7 +363,7 @@ func runGenerateEvidence(opts options) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return err
 	}
 	fmt.Printf("PASS: evidence generated %s\n", path)
@@ -380,6 +381,7 @@ func runCheckClosure(opts options) error {
 	}
 
 	path := filepath.Join(opts.evidenceDir, opts.beadID+".json")
+	// #nosec G304 -- path is derived from configured evidence directory and canonical bead ID.
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read evidence file %s: %w", path, err)
@@ -525,6 +527,7 @@ func testTagForBead(bead string) string {
 }
 
 func parseBeadTagsFromTestFile(path string) ([]string, error) {
+	// #nosec G304 -- path originates from repository-tracked test file discovery.
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -555,20 +558,24 @@ func parseBeadTagsFromTestFile(path string) ([]string, error) {
 func findTaggedTestsForBead(bead string) ([]linkedTest, error) {
 	tests := make([]linkedTest, 0)
 	wantedTag := testTagForBead(bead)
-	err := filepath.WalkDir(".", func(path string, d os.DirEntry, walkErr error) error {
+	rootFS := os.DirFS(".")
+	err := fs.WalkDir(rootFS, ".", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
 			if d.Name() == ".git" || d.Name() == ".worktrees" {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if !goTestFileSuffixRE.MatchString(path) {
 			return nil
 		}
-		body, err := os.ReadFile(path)
+		body, err := fs.ReadFile(rootFS, path)
 		if err != nil {
 			return err
 		}
@@ -656,6 +663,7 @@ func splitGoFiles(files []string) ([]string, []string) {
 }
 
 func runCmd(name string, args ...string) (string, error) {
+	// #nosec G204 -- command and args are provided by internal call sites with fixed executables.
 	cmd := exec.Command(name, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
