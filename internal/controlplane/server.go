@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -458,6 +459,10 @@ func (s *Server) createTurn(w http.ResponseWriter, r *http.Request) {
 
 	turn, err := s.turnMgr.Create(r.Context(), req.SessionID, req.Message)
 	if err != nil {
+		if errors.Is(err, ctxmgr.ErrActiveMutableTurnConflict) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

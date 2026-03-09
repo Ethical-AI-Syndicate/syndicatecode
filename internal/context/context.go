@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"sort"
 	"strings"
@@ -99,6 +100,14 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		return nil, err
 	}
 
+	hasActiveTurn, activeTurnID, err := m.hasActiveMutableTurn(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if hasActiveTurn {
+		return nil, fmt.Errorf("%w: session %s already has active turn %s", ErrActiveMutableTurnConflict, sessionID, activeTurnID)
+	}
+
 	decision := m.policy.Apply("turn.message", "user_input", message, DestinationPersistence)
 	redactedMessage := decision.Content
 	now := time.Now()
@@ -147,6 +156,90 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 	}
 
 	return turn, nil
+}
+
+func (m *TurnManager) hasActiveMutableTurn(ctx context.Context, sessionID string) (bool, string, error) {
+	events, err := m.eventStore.QueryBySession(ctx, sessionID)
+	if err != nil {
+		return false, "", err
+	}
+
+	turnStateByID := make(map[string]TurnStatus)
+	turnOrder := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	for _, event := range events {
+		if event.TurnID == "" {
+			continue
+		}
+		if _, ok := seen[event.TurnID]; !ok {
+			turnOrder = append(turnOrder, event.TurnID)
+			seen[event.TurnID] = struct{}{}
+		}
+
+		switch event.EventType {
+		case "turn_started":
+			if !isTerminalTurnStatus(turnStateByID[event.TurnID]) {
+				turnStateByID[event.TurnID] = TurnStatusActive
+			}
+		case "turn_awaiting_approval":
+			if !isTerminalTurnStatus(turnStateByID[event.TurnID]) {
+				turnStateByID[event.TurnID] = TurnStatusAwaitingApproval
+			}
+		case "turn_completed":
+			turnStateByID[event.TurnID] = TurnStatusCompleted
+		case "turn_failed":
+			turnStateByID[event.TurnID] = TurnStatusFailed
+		case "turn_cancelled":
+			turnStateByID[event.TurnID] = TurnStatusCancelled
+		default:
+			status, ok, decodeErr := transitionStatusFromPayload(event.Payload)
+			if decodeErr != nil {
+				return false, "", decodeErr
+			}
+			if ok {
+				if isTerminalTurnStatus(turnStateByID[event.TurnID]) {
+					continue
+				}
+				turnStateByID[event.TurnID] = status
+			}
+		}
+	}
+
+	for _, turnID := range turnOrder {
+		status := turnStateByID[turnID]
+		if status == TurnStatusActive || status == TurnStatusAwaitingApproval {
+			return true, turnID, nil
+		}
+	}
+
+	return false, "", nil
+}
+
+func transitionStatusFromPayload(payload []byte) (TurnStatus, bool, error) {
+	if len(payload) == 0 {
+		return "", false, nil
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return "", false, fmt.Errorf("failed to decode turn transition payload: %w", err)
+	}
+
+	rawStatus, ok := body["next_state"]
+	if !ok {
+		return "", false, nil
+	}
+	status, ok := rawStatus.(string)
+	if !ok {
+		return "", false, nil
+	}
+
+	return TurnStatus(status), true, nil
+}
+
+func isTerminalTurnStatus(status TurnStatus) bool {
+	return status == TurnStatusCompleted || status == TurnStatusFailed || status == TurnStatusCancelled
 }
 
 func (m *TurnManager) Get(ctx context.Context, turnID string) (*Turn, error) {
@@ -214,6 +307,7 @@ func (m *TurnManager) ListBySession(ctx context.Context, sessionID string) ([]*T
 }
 
 var ErrTurnNotFound = errors.New("turn not found")
+var ErrActiveMutableTurnConflict = errors.New("active mutable turn already exists")
 
 // ContextFragment represents a piece of context included in the prompt
 type ContextFragment struct {
