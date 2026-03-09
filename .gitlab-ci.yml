@@ -1,42 +1,66 @@
 stages:
-  - build
+  - format
+  - lint
   - test
+  - build
+  - bead
   - security
+  - evidence
 
 variables:
   GO_VERSION: "1.21"
+  GIT_DEPTH: "0"
 
-build:
-  stage: build
+default:
   image: golang:${GO_VERSION}
   before_script:
     - go mod download
+
+format:
+  stage: format
   script:
-    - go build -o bin/ ./cmd/...
-    - go vet ./...
-  artifacts:
-    paths:
-      - bin/
-    expire_in: 1 week
+    - ./.gitlab/scripts/check-gofmt.sh
 
 lint:
-  stage: build
-  image: golang:${GO_VERSION}
-  before_script:
-    - go mod download
-    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+  stage: lint
   script:
+    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
     - $(go env GOPATH)/bin/golangci-lint run
-  allow_failure: true
 
 test:
   stage: test
-  image: golang:${GO_VERSION}
-  before_script:
-    - go mod download
   script:
-    - go test -race -cover ./...
-  coverage: '/total:.*\s(\d+\.\d+)%/'
+    - go test -race ./...
+
+build:
+  stage: build
+  script:
+    - go build -o bin/ ./cmd/...
+    - go vet ./...
+
+bead-verify:
+  stage: bead
+  needs:
+    - format
+    - lint
+    - test
+    - build
+  script:
+    - |
+      if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
+        RANGE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-origin/master}..${CI_COMMIT_SHA}"
+      else
+        RANGE="origin/master..${CI_COMMIT_SHA}"
+      fi
+      echo "Using range: $RANGE"
+      go run ./tools/beads verify-commits --range "$RANGE" --strict
+      go run ./tools/beads verify --range "$RANGE" --strict
+    - |
+      if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
+        go run ./tools/beads verify-pr --strict --title "${CI_MERGE_REQUEST_TITLE:-}" --description "${CI_MERGE_REQUEST_DESCRIPTION:-}"
+      else
+        echo "Skipping PR metadata check for non-MR pipeline"
+      fi
 
 gosec:
   stage: security
@@ -45,4 +69,37 @@ gosec:
     entrypoint: [""]
   script:
     - gosec ./...
-  allow_failure: false
+
+bead-evidence:
+  stage: evidence
+  needs:
+    - bead-verify
+    - gosec
+  script:
+    - |
+      if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
+        RANGE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-origin/master}..${CI_COMMIT_SHA}"
+      else
+        RANGE="origin/master..${CI_COMMIT_SHA}"
+      fi
+      echo "Using range: $RANGE"
+      mapfile -t BEADS < <(go run ./tools/beads list-beads --range "$RANGE")
+      if [ ${#BEADS[@]} -eq 0 ]; then
+        echo "No bead IDs found in commit range"
+        exit 1
+      fi
+      for bead in "${BEADS[@]}"; do
+        go run ./tools/beads generate-evidence --bead "$bead" --range "$RANGE" \
+          --phase format=pass \
+          --phase lint=pass \
+          --phase test=pass \
+          --phase build=pass \
+          --phase bead-verify=pass \
+          --phase security=pass
+        go run ./tools/beads check-closure --bead "$bead"
+      done
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - bead-evidence/*.json
