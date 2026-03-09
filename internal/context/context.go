@@ -11,12 +11,48 @@ import (
 
 	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
-	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/state"
 )
 
 type TurnStatus = state.TurnState
+
+type RedactionDestination string
+
+const (
+	DestinationPersistence   RedactionDestination = "persistence"
+	DestinationModelProvider RedactionDestination = "model_provider"
+)
+
+type RedactionDecision struct {
+	Content             string
+	Action              string
+	Denied              bool
+	Reason              string
+	SensitivityClass    string
+	ClassificationLevel string
+}
+
+type RedactionPolicy interface {
+	Apply(sourceRef, sourceType, content string, destination RedactionDestination) RedactionDecision
+}
+
+type defaultDenyRedactionPolicy struct{}
+
+func (defaultDenyRedactionPolicy) Apply(sourceRef, sourceType, content string, destination RedactionDestination) RedactionDecision {
+	_ = sourceRef
+	_ = sourceType
+	_ = content
+	_ = destination
+	return RedactionDecision{
+		Content:             "[DENIED]",
+		Action:              "deny",
+		Denied:              true,
+		Reason:              "redaction policy not configured",
+		SensitivityClass:    "A",
+		ClassificationLevel: "secret_denied",
+	}
+}
 
 const (
 	TurnStatusActive           TurnStatus = state.TurnStateActive
@@ -38,12 +74,21 @@ type Turn struct {
 type TurnManager struct {
 	eventStore *audit.EventStore
 	sessionMgr *session.Manager
+	policy     RedactionPolicy
 }
 
 func NewTurnManager(eventStore *audit.EventStore, sessionMgr *session.Manager) *TurnManager {
+	return NewTurnManagerWithPolicy(eventStore, sessionMgr, defaultDenyRedactionPolicy{})
+}
+
+func NewTurnManagerWithPolicy(eventStore *audit.EventStore, sessionMgr *session.Manager, policy RedactionPolicy) *TurnManager {
+	if policy == nil {
+		policy = defaultDenyRedactionPolicy{}
+	}
 	return &TurnManager{
 		eventStore: eventStore,
 		sessionMgr: sessionMgr,
+		policy:     policy,
 	}
 }
 
@@ -54,7 +99,7 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		return nil, err
 	}
 
-	decision := secrets.NewPolicyExecutor(nil).Apply("turn.message", "user_input", message, secrets.DestinationPersistence)
+	decision := m.policy.Apply("turn.message", "user_input", message, DestinationPersistence)
 	redactedMessage := decision.Content
 	now := time.Now()
 	turn := &Turn{
@@ -71,8 +116,8 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		"redaction_action":     decision.Action,
 		"redaction_denied":     decision.Denied,
 		"redaction_reason":     decision.Reason,
-		"sensitivity_class":    decision.Classification.Class,
-		"classification_level": decision.Classification.Level,
+		"sensitivity_class":    decision.SensitivityClass,
+		"classification_level": decision.ClassificationLevel,
 		"entity_type":          "turn",
 		"entity_id":            turn.ID,
 		"previous_state":       "none",
@@ -197,13 +242,22 @@ type ContextConflict struct {
 type ContextAssembler struct {
 	budget    int
 	fragments []*ContextFragment
+	policy    RedactionPolicy
 }
 
 // NewContextAssembler creates a new context assembler with the given token budget
 func NewContextAssembler(budget int) *ContextAssembler {
+	return NewContextAssemblerWithPolicy(budget, defaultDenyRedactionPolicy{})
+}
+
+func NewContextAssemblerWithPolicy(budget int, policy RedactionPolicy) *ContextAssembler {
+	if policy == nil {
+		policy = defaultDenyRedactionPolicy{}
+	}
 	return &ContextAssembler{
 		budget:    budget,
 		fragments: make([]*ContextFragment, 0),
+		policy:    policy,
 	}
 }
 
@@ -243,13 +297,12 @@ func (a *ContextAssembler) BuildPrompt() string {
 	})
 
 	var parts []string
-	policy := secrets.NewPolicyExecutor(nil)
 	for _, f := range a.fragments {
-		decision := policy.Apply(f.SourceRef, f.SourceType, f.Content, secrets.DestinationModelProvider)
-		f.RedactionAction = string(decision.Action)
+		decision := a.policy.Apply(f.SourceRef, f.SourceType, f.Content, DestinationModelProvider)
+		f.RedactionAction = decision.Action
 		f.RedactionDenied = decision.Denied
 		f.RedactionReason = decision.Reason
-		f.Sensitivity = string(decision.Classification.Class)
+		f.Sensitivity = decision.SensitivityClass
 		if decision.Denied {
 			f.Included = false
 			f.ExclusionReason = "policy_denied"
