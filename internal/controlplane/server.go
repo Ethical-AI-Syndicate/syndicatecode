@@ -46,6 +46,7 @@ type Server struct {
 }
 
 const redactionAuditSessionID = "system:redaction"
+const approvalAuditSessionID = "system:approval"
 
 type redactionNotice struct {
 	Path           string `json:"path"`
@@ -77,6 +78,8 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize tooling: %w", err)
 	}
 
+	approvalMgr := NewApprovalManager(15*time.Minute, WithTransitionRecorder(newApprovalTransitionRecorder(eventStore)))
+
 	mux := http.NewServeMux()
 	server := &Server{
 		httpServer: &http.Server{
@@ -89,7 +92,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 		turnMgr:      turnMgr,
 		ctxManifest:  ctxManifest,
 		eventStore:   eventStore,
-		approvalMgr:  NewApprovalManager(15 * time.Minute),
+		approvalMgr:  approvalMgr,
 		toolRegistry: toolRegistry,
 		toolExecutor: toolExecutor,
 	}
@@ -593,7 +596,7 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if requiresApproval(toolDef) {
-		approval, err := s.approvalMgr.Propose("", req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
+		approval, err := s.approvalMgr.Propose(req.SessionID, req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -621,6 +624,53 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(toolExecuteResponse{ToolResult: result, RedactionNotices: notices}); err != nil {
 		log.Printf("failed to encode tool response: %v", err)
+	}
+}
+
+func newApprovalTransitionRecorder(eventStore *audit.EventStore) ApprovalTransitionRecorder {
+	return func(transition ApprovalTransition) {
+		if eventStore == nil {
+			return
+		}
+
+		sessionID := transition.SessionID
+		if sessionID == "" {
+			sessionID = approvalAuditSessionID
+		}
+
+		payload, err := json.Marshal(map[string]interface{}{
+			"entity_type":          "approval",
+			"entity_id":            transition.ApprovalID,
+			"previous_state":       transition.FromState,
+			"next_state":           transition.ToState,
+			"transition_timestamp": transition.Timestamp.Format(time.RFC3339Nano),
+			"cause":                transition.Trigger,
+			"tool_name":            transition.ToolName,
+			"arguments_hash":       transition.ArgumentsHash,
+			"side_effect":          transition.SideEffect,
+			"decision":             transition.Decision,
+			"reason":               transition.Reason,
+			"related_ids": map[string]interface{}{
+				"session_id": transition.SessionID,
+			},
+		})
+		if err != nil {
+			log.Printf("failed to marshal approval transition payload: %v", err)
+			return
+		}
+
+		err = eventStore.Append(context.Background(), audit.Event{
+			ID:            uuid.NewString(),
+			SessionID:     sessionID,
+			Timestamp:     transition.Timestamp,
+			EventType:     "approval.transition",
+			Actor:         "controlplane",
+			PolicyVersion: "1.0.0",
+			Payload:       payload,
+		})
+		if err != nil {
+			log.Printf("failed to append approval.transition event: %v", err)
+		}
 	}
 }
 

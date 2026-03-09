@@ -49,7 +49,14 @@ func (m *Manager) Create(ctx context.Context, repoPath, trustTier string) (*Sess
 	}
 
 	payload, _ := json.Marshal(map[string]interface{}{
-		"repo_path": repoPath,
+		"repo_path":            repoPath,
+		"entity_type":          "session",
+		"entity_id":            session.ID,
+		"previous_state":       "none",
+		"next_state":           session.Status,
+		"cause":                "session_create_requested",
+		"transition_timestamp": now.Format(time.RFC3339Nano),
+		"related_ids":          map[string]interface{}{},
 	})
 
 	event := audit.Event{
