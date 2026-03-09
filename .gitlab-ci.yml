@@ -101,7 +101,10 @@ bead-evidence:
           echo "Bead $bead not found in bd - skipping"
           continue
         fi
-        STATUS=$(echo "$BEAD_STATUS" | jq -r '.[0].status // "unknown"' 2>/dev/null)
+        STATUS=$(printf '%s' "$BEAD_STATUS" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        if [ -z "$STATUS" ]; then
+          STATUS="unknown"
+        fi
         if [ "$STATUS" = "closed" ]; then
           echo "Bead $bead is already closed - skipping closure check"
           continue
