@@ -93,3 +93,10 @@ func TestValidateChangedGoFiles_NoChangedTests_Bead_l3d_1(t *testing.T) {
 		t.Fatal("expected verification issue for missing changed test files")
 	}
 }
+
+func TestBeadIssueID_UsesGitRootRepoName_Bead_l3d_10_2(t *testing.T) {
+	issueID := beadIssueID("l3d.10.2")
+	if issueID != "SyndicateCode-l3d.10.2" {
+		t.Fatalf("expected SyndicateCode-l3d.10.2, got %s", issueID)
+	}
+}
