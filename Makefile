@@ -1,4 +1,4 @@
-.PHONY: verify verify-json ci-local format-check lint test race build beads-verify beads-verify-commits beads-verify-pr beads-evidence beads-check-closure
+.PHONY: verify verify-json ci-local format-check lint test race build schema-generate beads-verify beads-verify-commits beads-verify-pr beads-evidence beads-check-closure
 
 RANGE ?= origin/master..HEAD
 BEAD ?=
@@ -39,6 +39,9 @@ race:
 build:
 	@go build -o bin/ ./cmd/...
 	@go vet ./...
+
+schema-generate: ## Regenerate docs/schema/registry.json — run after any schema change
+	@go test ./pkg/api/... -update -run TestGeneratedArtifactMatchesCommittedFile -v
 
 beads-verify:
 	@go run ./tools/beads verify --range "$(RANGE)" --strict
