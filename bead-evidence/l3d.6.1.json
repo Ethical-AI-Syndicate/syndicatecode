@@ -1,0 +1,66 @@
+{
+  "bead_id": "l3d.6.1",
+  "bead_issue_id": "SyndicateCode-l3d.6.1",
+  "bead_issue_status": "in_progress",
+  "generated_at_utc": "2026-03-09T18:12:05Z",
+  "generator_version": "v2",
+  "head_sha": "f44591b9fe90e19e1aad9f769c9be3f1c71c901c",
+  "range": "origin/master..HEAD",
+  "commits": [],
+  "changed_files": [
+    "bead-evidence/l3d.1.json",
+    "bead-evidence/l3d.10.4.json",
+    "bead-evidence/l3d.2.1.json",
+    "internal/controlplane/server.go",
+    "internal/controlplane/turns_api_test.go",
+    "pkg/tui/app.go",
+    "pkg/tui/app_test.go",
+    "pkg/tui/client.go"
+  ],
+  "changed_go_files": [
+    "internal/controlplane/server.go",
+    "pkg/tui/app.go",
+    "pkg/tui/client.go"
+  ],
+  "changed_test_files": [
+    "internal/controlplane/turns_api_test.go",
+    "pkg/tui/app_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/patch/proposal_test.go",
+      "line": 8,
+      "test_name": "TestProposal_Serialization_Bead_l3d_6_1",
+      "beads": [
+        "l3d.6.1"
+      ]
+    },
+    {
+      "file": "internal/patch/proposal_test.go",
+      "line": 133,
+      "test_name": "TestProposal_Validation_Bead_l3d_6_1",
+      "beads": [
+        "l3d.6.1"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": false,
+    "reasons": [
+      "no commits linked to bead in configured range"
+    ]
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}

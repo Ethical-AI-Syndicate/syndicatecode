@@ -41,9 +41,10 @@ func (c *APIClient) CreateSession(ctx context.Context, req CreateSessionRequest)
 	return &session, nil
 }
 
-func (c *APIClient) CreateTurn(ctx context.Context, req CreateTurnRequest) (*Turn, error) {
+func (c *APIClient) CreateTurn(ctx context.Context, sessionID string, req CreateTurnRequest) (*Turn, error) {
 	var turn Turn
-	if err := c.doJSON(ctx, http.MethodPost, "/turns", req, &turn); err != nil {
+	path := fmt.Sprintf("/sessions/%s/turns", sessionID)
+	if err := c.doJSON(ctx, http.MethodPost, path, req, &turn); err != nil {
 		return nil, err
 	}
 	return &turn, nil
@@ -66,9 +67,9 @@ func (c *APIClient) DecideApproval(ctx context.Context, approvalID string, req D
 	return &approval, nil
 }
 
-func (c *APIClient) GetTurnContext(ctx context.Context, turnID string) ([]ContextFragment, error) {
+func (c *APIClient) GetTurnContext(ctx context.Context, sessionID, turnID string) ([]ContextFragment, error) {
 	var fragments []ContextFragment
-	path := fmt.Sprintf("/turns/%s/context", turnID)
+	path := fmt.Sprintf("/sessions/%s/turns/%s/context", sessionID, turnID)
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &fragments); err != nil {
 		return nil, err
 	}

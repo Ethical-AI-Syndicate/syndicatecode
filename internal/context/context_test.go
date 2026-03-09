@@ -3,9 +3,12 @@ package context
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
@@ -243,9 +246,26 @@ func TestTurnManager_ListBySession(t *testing.T) {
 		t.Fatalf("failed to create session: %v", err)
 	}
 
-	_, _ = turnMgr.Create(ctx, sess.ID, "First message")
-	_, _ = turnMgr.Create(ctx, sess.ID, "Second message")
-	_, _ = turnMgr.Create(ctx, sess.ID, "Third message")
+	firstTurn, err := turnMgr.Create(ctx, sess.ID, "First message")
+	if err != nil {
+		t.Fatalf("failed to create first turn: %v", err)
+	}
+	if err := appendTurnCompletedEvent(ctx, eventStore, sess.ID, firstTurn.ID); err != nil {
+		t.Fatalf("failed to complete first turn: %v", err)
+	}
+
+	secondTurn, err := turnMgr.Create(ctx, sess.ID, "Second message")
+	if err != nil {
+		t.Fatalf("failed to create second turn: %v", err)
+	}
+	if err := appendTurnCompletedEvent(ctx, eventStore, sess.ID, secondTurn.ID); err != nil {
+		t.Fatalf("failed to complete second turn: %v", err)
+	}
+
+	_, err = turnMgr.Create(ctx, sess.ID, "Third message")
+	if err != nil {
+		t.Fatalf("failed to create third turn: %v", err)
+	}
 
 	turns, err := turnMgr.ListBySession(ctx, sess.ID)
 	if err != nil {
@@ -254,6 +274,94 @@ func TestTurnManager_ListBySession(t *testing.T) {
 
 	if len(turns) != 3 {
 		t.Errorf("expected 3 turns, got %d", len(turns))
+	}
+}
+
+func TestTurnManager_RejectsSecondActiveMutableTurn_Bead_l3d_1_4(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	firstTurn, err := turnMgr.Create(ctx, sess.ID, "first message")
+	if err != nil {
+		t.Fatalf("failed to create first turn: %v", err)
+	}
+
+	_, err = turnMgr.Create(ctx, sess.ID, "second message")
+	if err == nil {
+		t.Fatal("expected active mutable turn conflict error")
+	}
+	if !errors.Is(err, ErrActiveMutableTurnConflict) {
+		t.Fatalf("expected ErrActiveMutableTurnConflict, got %v", err)
+	}
+
+	storedTurn, err := turnMgr.Get(ctx, firstTurn.ID)
+	if err != nil {
+		t.Fatalf("expected read-only turn retrieval to work, got %v", err)
+	}
+	if storedTurn.ID != firstTurn.ID {
+		t.Fatalf("expected retrieved turn %s, got %s", firstTurn.ID, storedTurn.ID)
+	}
+
+	turns, err := turnMgr.ListBySession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("expected read-only listing to work, got %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("expected exactly one turn after conflict rejection, got %d", len(turns))
+	}
+}
+
+func TestTurnManager_AllowsNewTurnAfterTerminalTransition_Bead_l3d_1_4(t *testing.T) {
+	eventStore, err := audit.NewEventStore(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = eventStore.Close() })
+
+	sessionMgr := session.NewManager(eventStore)
+	turnMgr := NewTurnManagerWithPolicy(eventStore, sessionMgr, secretsRedactionPolicy{executor: secrets.NewPolicyExecutor(nil)})
+
+	ctx := context.Background()
+	sess, err := sessionMgr.Create(ctx, "/test/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	firstTurn, err := turnMgr.Create(ctx, sess.ID, "first message")
+	if err != nil {
+		t.Fatalf("failed to create first turn: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]string{"reason": "completed"})
+	if err != nil {
+		t.Fatalf("failed to marshal terminal transition payload: %v", err)
+	}
+	if err := eventStore.Append(ctx, audit.Event{
+		ID:        uuid.New().String(),
+		SessionID: firstTurn.SessionID,
+		TurnID:    firstTurn.ID,
+		EventType: "turn_completed",
+		Timestamp: time.Now(),
+		Payload:   payload,
+	}); err != nil {
+		t.Fatalf("failed to append terminal transition event: %v", err)
+	}
+
+	_, err = turnMgr.Create(ctx, sess.ID, "second message")
+	if err != nil {
+		t.Fatalf("expected second turn creation after completion, got %v", err)
 	}
 }
 
@@ -277,6 +385,16 @@ func TestContextAssembler_AddFragment(t *testing.T) {
 	if len(assembler.fragments) != 1 {
 		t.Errorf("expected 1 fragment, got %d", len(assembler.fragments))
 	}
+}
+
+func appendTurnCompletedEvent(ctx context.Context, eventStore *audit.EventStore, sessionID, turnID string) error {
+	return eventStore.Append(ctx, audit.Event{
+		ID:        uuid.New().String(),
+		SessionID: sessionID,
+		TurnID:    turnID,
+		EventType: "turn_completed",
+		Timestamp: time.Now(),
+	})
 }
 
 func TestContextAssembler_TokenBudget(t *testing.T) {

@@ -1,0 +1,111 @@
+{
+  "bead_id": "l3d.10.4",
+  "bead_issue_id": "SyndicateCode-l3d.10.4",
+  "bead_issue_status": "open",
+  "generated_at_utc": "2026-03-09T12:51:59Z",
+  "generator_version": "v2",
+  "head_sha": "b7b643997728558b41addf72cca5660cbad4640b",
+  "range": "origin/master..HEAD",
+  "commits": [],
+  "changed_files": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/ai_cli_api_schema_spec.md",
+    "docs/ai_cli_cli_command_surface_spec.md",
+    "docs/ai_cli_context_retrieval_strategy.md",
+    "docs/ai_cli_control_plane_state_machine.md",
+    "docs/ai_cli_git_integration_model.md",
+    "docs/ai_cli_implementation_backlog_milestones.md",
+    "docs/ai_cli_implementation_workstreams_plan.md",
+    "docs/ai_cli_model_routing_provider_policy.md",
+    "docs/ai_cli_patch_edit_engine_spec.md",
+    "docs/ai_cli_plugin_mcp_trust_model.md",
+    "docs/ai_cli_prompt_context_assembly_pipeline.md",
+    "docs/ai_cli_repo_structure_package_boundaries.md",
+    "docs/ai_cli_sandbox_execution_isolation_model.md",
+    "docs/ai_cli_secrets_classification_redaction_spec.md",
+    "docs/ai_cli_session_persistence_retention_model.md",
+    "docs/ai_cli_sqlite_schema_storage_model.md",
+    "docs/ai_cli_system_architecture_diagram.md",
+    "docs/ai_cli_testing_failure_injection_plan.md",
+    "docs/ai_cli_threat_to_control_traceability_matrix.md",
+    "docs/ai_cli_tui_information_architecture.md",
+    "internal/audit/event_store.go",
+    "internal/audit/event_store_test.go",
+    "internal/context/context.go",
+    "internal/context/context_test.go",
+    "internal/controlplane/approval.go",
+    "internal/controlplane/approval_test.go",
+    "internal/controlplane/server.go",
+    "internal/models/routing.go",
+    "internal/models/routing_engine.go",
+    "internal/models/routing_engine_test.go",
+    "internal/session/manager.go",
+    "internal/session/manager_test.go"
+  ],
+  "changed_go_files": [
+    "internal/audit/event_store.go",
+    "internal/context/context.go",
+    "internal/controlplane/approval.go",
+    "internal/controlplane/server.go",
+    "internal/models/routing.go",
+    "internal/models/routing_engine.go",
+    "internal/session/manager.go"
+  ],
+  "changed_test_files": [
+    "internal/audit/event_store_test.go",
+    "internal/context/context_test.go",
+    "internal/controlplane/approval_test.go",
+    "internal/models/routing_engine_test.go",
+    "internal/session/manager_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "tools/verify/main_test.go",
+      "line": 9,
+      "test_name": "TestRunVerification_JSONContract_Bead_l3d_10_4",
+      "beads": [
+        "l3d.10.4"
+      ]
+    },
+    {
+      "file": "tools/verify/main_test.go",
+      "line": 58,
+      "test_name": "TestRunVerification_MetadataStrictFailure_Bead_l3d_10_4",
+      "beads": [
+        "l3d.10.4"
+      ]
+    },
+    {
+      "file": "tools/verify/main_test.go",
+      "line": 84,
+      "test_name": "TestRunVerification_AllRequiredPhasesPass_Bead_l3d_10_4",
+      "beads": [
+        "l3d.10.4"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "fail",
+    "build": "pass",
+    "format": "pass",
+    "lint": "fail",
+    "metadata-verify": "unknown",
+    "security": "fail",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": false,
+    "reasons": [
+      "no commits linked to bead in configured range",
+      "CI phase lint status=fail",
+      "CI phase bead-verify status=fail",
+      "CI phase security status=fail"
+    ]
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}

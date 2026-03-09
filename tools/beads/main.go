@@ -354,7 +354,7 @@ func runGenerateEvidence(opts options) error {
 	}
 	evidence.Summary = evaluateEvidence(evidence)
 
-	if err := os.MkdirAll(opts.evidenceDir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.evidenceDir, 0o750); err != nil {
 		return err
 	}
 	path := filepath.Join(opts.evidenceDir, opts.beadID+".json")
@@ -362,7 +362,7 @@ func runGenerateEvidence(opts options) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return err
 	}
 	fmt.Printf("PASS: evidence generated %s\n", path)
@@ -380,6 +380,7 @@ func runCheckClosure(opts options) error {
 	}
 
 	path := filepath.Join(opts.evidenceDir, opts.beadID+".json")
+	// #nosec G304 -- path is constrained to configured evidence directory and bead filename.
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read evidence file %s: %w", path, err)
@@ -525,6 +526,7 @@ func testTagForBead(bead string) string {
 }
 
 func parseBeadTagsFromTestFile(path string) ([]string, error) {
+	// #nosec G304 -- path comes from git-tracked changed test files within repository root.
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -568,6 +570,7 @@ func findTaggedTestsForBead(bead string) ([]linkedTest, error) {
 		if !goTestFileSuffixRE.MatchString(path) {
 			return nil
 		}
+		// #nosec G304,G122 -- walk scope is repository root and reads are non-mutating for test discovery.
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -656,6 +659,10 @@ func splitGoFiles(files []string) ([]string, []string) {
 }
 
 func runCmd(name string, args ...string) (string, error) {
+	if name != "git" && name != "bd" {
+		return "", fmt.Errorf("unsupported command: %s", name)
+	}
+	// #nosec G204 -- command binary is allowlisted to git/bd and args are explicit call sites.
 	cmd := exec.Command(name, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -702,8 +709,23 @@ func contains(values []string, wanted string) bool {
 
 func beadIssueID(bead string) string {
 	repoName := "SyndicateCode"
-	if cwd, err := os.Getwd(); err == nil {
-		repoName = filepath.Base(cwd)
+	if remoteURL, err := runCmd("git", "remote", "get-url", "origin"); err == nil {
+		remoteURL = strings.TrimSpace(remoteURL)
+		if remoteURL != "" {
+			candidate := strings.TrimSuffix(filepath.Base(remoteURL), ".git")
+			if candidate != "" {
+				repoName = candidate
+			}
+		}
+	} else if root, rootErr := runCmd("git", "rev-parse", "--show-toplevel"); rootErr == nil {
+		root = strings.TrimSpace(root)
+		if root != "" {
+			repoName = filepath.Base(root)
+		}
+	}
+
+	if strings.EqualFold(repoName, "syndicatecode") {
+		repoName = "SyndicateCode"
 	}
 	return fmt.Sprintf("%s-%s", repoName, bead)
 }

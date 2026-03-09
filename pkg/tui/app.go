@@ -11,10 +11,10 @@ import (
 type API interface {
 	ListSessions(ctx context.Context) ([]Session, error)
 	CreateSession(ctx context.Context, req CreateSessionRequest) (*Session, error)
-	CreateTurn(ctx context.Context, req CreateTurnRequest) (*Turn, error)
+	CreateTurn(ctx context.Context, sessionID string, req CreateTurnRequest) (*Turn, error)
 	ListApprovals(ctx context.Context) ([]Approval, error)
 	DecideApproval(ctx context.Context, approvalID string, req DecideApprovalRequest) (*Approval, error)
-	GetTurnContext(ctx context.Context, turnID string) ([]ContextFragment, error)
+	GetTurnContext(ctx context.Context, sessionID, turnID string) ([]ContextFragment, error)
 }
 
 type App struct {
@@ -100,10 +100,10 @@ func (a *App) executeCommand(ctx context.Context, args []string) (bool, error) {
 		}
 		return false, a.handleDecision(ctx, args[1], "deny", reason)
 	case "context":
-		if len(args) < 2 {
-			return false, a.writeln("usage: context <turn_id>")
+		if len(args) < 3 {
+			return false, a.writeln("usage: context <session_id> <turn_id>")
 		}
-		return false, a.handleContext(ctx, args[1])
+		return false, a.handleContext(ctx, args[1], args[2])
 	default:
 		return false, a.writeln("unknown command")
 	}
@@ -151,7 +151,7 @@ func (a *App) handleNewSession(ctx context.Context, repoPath, trustTier string) 
 }
 
 func (a *App) handleTurn(ctx context.Context, sessionID, message string) error {
-	turn, err := a.api.CreateTurn(ctx, CreateTurnRequest{SessionID: sessionID, Message: message})
+	turn, err := a.api.CreateTurn(ctx, sessionID, CreateTurnRequest{Message: message})
 	if err != nil {
 		return err
 	}
@@ -179,8 +179,8 @@ func (a *App) handleDecision(ctx context.Context, approvalID, decision, reason s
 	return a.writef("%s -> %s\n", approval.ID, approval.State)
 }
 
-func (a *App) handleContext(ctx context.Context, turnID string) error {
-	fragments, err := a.api.GetTurnContext(ctx, turnID)
+func (a *App) handleContext(ctx context.Context, sessionID, turnID string) error {
+	fragments, err := a.api.GetTurnContext(ctx, sessionID, turnID)
 	if err != nil {
 		return err
 	}

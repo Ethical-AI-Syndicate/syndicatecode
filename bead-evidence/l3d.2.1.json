@@ -1,0 +1,59 @@
+{
+  "bead_id": "l3d.2.1",
+  "bead_issue_id": "SyndicateCode-l3d.2.1",
+  "bead_issue_status": "in_progress",
+  "generated_at_utc": "2026-03-09T18:07:22Z",
+  "generator_version": "v2",
+  "head_sha": "d3b0b26d0c80706f457fae5913a63887861660cd",
+  "range": "origin/master..HEAD",
+  "commits": [],
+  "changed_files": [],
+  "changed_go_files": [],
+  "changed_test_files": [],
+  "linked_tests": [
+    {
+      "file": "internal/controlplane/turns_api_test.go",
+      "line": 18,
+      "test_name": "TestCreateTurn_SessionScoped_Bead_l3d_2_1",
+      "beads": [
+        "l3d.2.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/turns_api_test.go",
+      "line": 97,
+      "test_name": "TestListTurns_SessionScoped_Bead_l3d_2_1",
+      "beads": [
+        "l3d.2.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/turns_api_test.go",
+      "line": 145,
+      "test_name": "TestGetTurnContext_SessionScoped_Bead_l3d_2_1",
+      "beads": [
+        "l3d.2.1"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": false,
+    "reasons": [
+      "no commits linked to bead in configured range",
+      "no changed files captured for bead range"
+    ]
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
