@@ -1,0 +1,83 @@
+{
+  "bead_id": "l3d.5.2",
+  "bead_issue_id": "bead-l3d.5.2-routing-engine-l3d.5.2",
+  "generated_at_utc": "2026-03-09T19:49:19Z",
+  "generator_version": "v2",
+  "head_sha": "ae514814357242ab14fb4f9eee6df12df1dd386a",
+  "range": "origin/master..HEAD",
+  "commits": [
+    {
+      "sha": "195229e2a4020b25263f5244700c144837ef0b34",
+      "subject": "test(policy): add bead-linked routing determinism coverage [l3d.5.2]",
+      "beads": [
+        "l3d.5.2"
+      ]
+    }
+  ],
+  "changed_files": [
+    ".gitlab-ci.yml",
+    "internal/policy/routing_test.go",
+    "tools/beads/main.go",
+    "tools/beads/main_test.go",
+    "tools/verify/main.go"
+  ],
+  "changed_go_files": [
+    "tools/beads/main.go",
+    "tools/verify/main.go"
+  ],
+  "changed_test_files": [
+    "internal/policy/routing_test.go",
+    "tools/beads/main_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/policy/routing_test.go",
+      "line": 5,
+      "test_name": "TestRouteEngineSelectPrefersLocalWhenEligible_Bead_l3d_5_2",
+      "beads": [
+        "l3d.5.2"
+      ]
+    },
+    {
+      "file": "internal/policy/routing_test.go",
+      "line": 44,
+      "test_name": "TestRouteEngineSelectFiltersIneligibleProviders_Bead_l3d_5_2",
+      "beads": [
+        "l3d.5.2"
+      ]
+    },
+    {
+      "file": "internal/policy/routing_test.go",
+      "line": 82,
+      "test_name": "TestRouteEngineSelectIsDeterministicOnTie_Bead_l3d_5_2",
+      "beads": [
+        "l3d.5.2"
+      ]
+    },
+    {
+      "file": "tools/beads/main_test.go",
+      "line": 55,
+      "test_name": "TestPolicyGate_Bead_l3d_5_2",
+      "beads": [
+        "l3d.5.2"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": true,
+    "reasons": null
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
