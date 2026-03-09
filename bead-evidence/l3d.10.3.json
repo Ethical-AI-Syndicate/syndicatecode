@@ -1,13 +1,27 @@
 {
   "bead_id": "l3d.10.3",
   "bead_issue_id": "bead-loop-3-l3d.10.3",
-  "generated_at_utc": "2026-03-09T19:39:15Z",
+  "generated_at_utc": "2026-03-09T20:18:40Z",
   "generator_version": "v2",
-  "head_sha": "38f6cd12dcf91f1b7879750e9de1de3017963f85",
+  "head_sha": "c154b8654d3a578190131409409447b60a92800c",
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "ac600570a4d38f7a604ea094f1c26e1156ac33b5",
+      "sha": "c154b8654d3a578190131409409447b60a92800c",
+      "subject": "chore(ci): retrigger pipeline after master sync [l3d.10.3]",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "sha": "326473e373ec85c3f7ce0f46d57def48e2efbc32",
+      "subject": "bd:l3d.10.3 refresh evidence after full CI pass [l3d.10.3]",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "sha": "518f132a34e7b905a40b2a9d15fc2a6d102546d8",
       "subject": "bd:l3d.10.3 implement soft/hard/tombstone session deletion semantics [l3d.10.3]",
       "beads": [
         "l3d.10.3"
@@ -15,22 +29,17 @@
     }
   ],
   "changed_files": [
+    "bead-evidence/l3d.10.3.json",
     "internal/audit/event_store.go",
     "internal/session/manager.go",
-    "internal/session/manager_test.go",
-    "tools/beads/main.go",
-    "tools/beads/main_test.go",
-    "tools/verify/main.go"
+    "internal/session/manager_test.go"
   ],
   "changed_go_files": [
     "internal/audit/event_store.go",
-    "internal/session/manager.go",
-    "tools/beads/main.go",
-    "tools/verify/main.go"
+    "internal/session/manager.go"
   ],
   "changed_test_files": [
-    "internal/session/manager_test.go",
-    "tools/beads/main_test.go"
+    "internal/session/manager_test.go"
   ],
   "linked_tests": [
     {
