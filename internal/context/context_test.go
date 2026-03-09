@@ -277,7 +277,7 @@ func TestTurnManager_ListBySession(t *testing.T) {
 	}
 }
 
-func TestTurnManager_BeadL3d14RejectsSecondActiveMutableTurn(t *testing.T) {
+func TestTurnManager_Bead_l3d_1_4_RejectsSecondActiveMutableTurn(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
@@ -323,7 +323,7 @@ func TestTurnManager_BeadL3d14RejectsSecondActiveMutableTurn(t *testing.T) {
 	}
 }
 
-func TestTurnManager_BeadL3d14AllowsNewTurnAfterTerminalTransition(t *testing.T) {
+func TestTurnManager_Bead_l3d_1_4_AllowsNewTurnAfterTerminalTransition(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)

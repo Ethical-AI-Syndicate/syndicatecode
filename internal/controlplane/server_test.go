@@ -13,7 +13,7 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
 
-func TestCreateTurn_BeadL3d14RejectsConcurrentMutableTurnsAndPreservesReadOnlyAccess(t *testing.T) {
+func TestCreateTurn_Bead_l3d_1_4_RejectsConcurrentMutableTurnsAndPreservesReadOnlyAccess(t *testing.T) {
 	eventStore, err := audit.NewEventStore(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
