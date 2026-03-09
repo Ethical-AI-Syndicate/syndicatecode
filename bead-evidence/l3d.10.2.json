@@ -1,34 +1,34 @@
 {
   "bead_id": "l3d.10.2",
   "bead_issue_id": "bead-l3d-10-2-export-pipeline-l3d.10.2",
-  "generated_at_utc": "2026-03-09T19:45:33Z",
+  "generated_at_utc": "2026-03-09T20:22:09Z",
   "generator_version": "v2",
-  "head_sha": "7977104dbe5cfa77bc6bc322fb9baee4b7cdbaa6",
+  "head_sha": "70b237194cfbdd6419e9a36805619d784de538a1",
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "3c1e7b06e46fe0464bda9cb9132748fcd8651591",
-      "subject": "chore(export): merge master updates [l3d.10.2]",
+      "sha": "70b237194cfbdd6419e9a36805619d784de538a1",
+      "subject": "chore(ci): retrigger pipeline after master sync [l3d.10.2]",
       "beads": [
         "l3d.10.2"
       ]
     },
     {
-      "sha": "1e01b97e071884436ef585303889f82fd8857b17",
+      "sha": "13e141c043f8f61f417cf7ac3b45ddd12f64452e",
+      "subject": "bd:l3d.10.2 refresh evidence after full CI pass [l3d.10.2]",
+      "beads": [
+        "l3d.10.2"
+      ]
+    },
+    {
+      "sha": "3a90add29e8058ed66379296245f6d8c4c78d0b0",
       "subject": "test(controlplane): add bead-tagged export coverage [l3d.10.2]",
       "beads": [
         "l3d.10.2"
       ]
     },
     {
-      "sha": "d7664e2995d263b713ab847c55a4fd24039c667a",
-      "subject": "Merge origin/master into bead/l3d.10.2-export-pipeline",
-      "beads": [
-        "l3d.10.2"
-      ]
-    },
-    {
-      "sha": "0336f8916bdb2aeaf76a35e20781079d73ed9f74",
+      "sha": "0ea03fbe2d5823d7c10ef5f8f320b7f70dc26892",
       "subject": "bd:l3d.10.2 implement explicit session export filtering pipeline",
       "beads": [
         "l3d.10.2"
@@ -36,22 +36,15 @@
     }
   ],
   "changed_files": [
-    "internal/controlplane/replay_test.go",
+    "bead-evidence/l3d.10.2.json",
     "internal/controlplane/server.go",
-    "internal/controlplane/server_test.go",
-    "tools/beads/main.go",
-    "tools/beads/main_test.go",
-    "tools/verify/main.go"
+    "internal/controlplane/server_test.go"
   ],
   "changed_go_files": [
-    "internal/controlplane/server.go",
-    "tools/beads/main.go",
-    "tools/verify/main.go"
+    "internal/controlplane/server.go"
   ],
   "changed_test_files": [
-    "internal/controlplane/replay_test.go",
-    "internal/controlplane/server_test.go",
-    "tools/beads/main_test.go"
+    "internal/controlplane/server_test.go"
   ],
   "linked_tests": [
     {
