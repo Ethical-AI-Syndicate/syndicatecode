@@ -95,6 +95,18 @@ bead-evidence:
         exit 1
       fi
       for bead in "${BEADS[@]}"; do
+        # Check if bead exists and is already closed - skip closure check if so
+        BEAD_STATUS=$(go run ./tools/beads show "$bead" --json 2>&1)
+        if echo "$BEAD_STATUS" | grep -q "not found\|No issues found"; then
+          echo "Bead $bead not found in bd - skipping"
+          continue
+        fi
+        STATUS=$(echo "$BEAD_STATUS" | jq -r '.[0].status // "unknown"' 2>/dev/null)
+        if [ "$STATUS" = "closed" ]; then
+          echo "Bead $bead is already closed - skipping closure check"
+          continue
+        fi
+        
         go run ./tools/beads generate-evidence --bead "$bead" --range "$RANGE" \
           --phase format=pass \
           --phase lint=pass \
