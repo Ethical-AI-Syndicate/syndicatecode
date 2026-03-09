@@ -94,3 +94,103 @@ func TestHandleSessionByID_EventsUnknownSessionReturnsNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
+
+func TestHandleSessionByID_EventsCanBeFilteredByType(t *testing.T) {
+	eventStore, err := audit.NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := eventStore.Close(); closeErr != nil {
+			t.Fatalf("failed to close event store: %v", closeErr)
+		}
+	})
+
+	sessionMgr := session.NewManager(eventStore)
+	created, err := sessionMgr.Create(context.Background(), "/tmp/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	if err := eventStore.Append(context.Background(), audit.Event{
+		ID:        uuid.NewString(),
+		SessionID: created.ID,
+		Timestamp: time.Now().UTC(),
+		EventType: "mcp.call",
+		Actor:     "controlplane",
+		Payload:   json.RawMessage(`{"server_id":"inventory.remote"}`),
+	}); err != nil {
+		t.Fatalf("failed to append mcp.call event: %v", err)
+	}
+
+	if err := eventStore.Append(context.Background(), audit.Event{
+		ID:        uuid.NewString(),
+		SessionID: created.ID,
+		Timestamp: time.Now().UTC(),
+		EventType: "tool_output_redaction",
+		Actor:     "system",
+		Payload:   json.RawMessage(`{"notice_count":1}`),
+	}); err != nil {
+		t.Fatalf("failed to append tool_output_redaction event: %v", err)
+	}
+
+	server := &Server{sessionMgr: sessionMgr, eventStore: eventStore}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+created.ID+"/events?event_type=mcp.call", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleSessionByID(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var events []audit.Event
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
+		t.Fatalf("failed to decode filtered events: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 filtered event, got %d", len(events))
+	}
+	if events[0].EventType != "mcp.call" {
+		t.Fatalf("expected mcp.call event, got %s", events[0].EventType)
+	}
+}
+
+func TestHandleSessionByID_EventsFilterWithNoMatchesReturnsEmptyList(t *testing.T) {
+	eventStore, err := audit.NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := eventStore.Close(); closeErr != nil {
+			t.Fatalf("failed to close event store: %v", closeErr)
+		}
+	})
+
+	sessionMgr := session.NewManager(eventStore)
+	created, err := sessionMgr.Create(context.Background(), "/tmp/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	server := &Server{sessionMgr: sessionMgr, eventStore: eventStore}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+created.ID+"/events?event_type=mcp.call", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleSessionByID(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var events []audit.Event
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
+		t.Fatalf("failed to decode empty filtered events response: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected empty filtered event list, got %d entries", len(events))
+	}
+}
