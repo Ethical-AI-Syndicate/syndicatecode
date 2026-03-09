@@ -73,6 +73,15 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		"redaction_reason":     decision.Reason,
 		"sensitivity_class":    decision.Classification.Class,
 		"classification_level": decision.Classification.Level,
+		"entity_type":          "turn",
+		"entity_id":            turn.ID,
+		"previous_state":       "none",
+		"next_state":           turn.Status,
+		"cause":                "turn_create_requested",
+		"transition_timestamp": now.Format(time.RFC3339Nano),
+		"related_ids": map[string]interface{}{
+			"session_id": sessionID,
+		},
 	})
 	if err != nil {
 		return nil, err

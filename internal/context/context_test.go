@@ -317,6 +317,21 @@ func TestTurnManager_CreatePersistsRedactionMetadata(t *testing.T) {
 	if payload["redaction_denied"] != false {
 		t.Fatalf("expected redaction_denied false, got %v", payload["redaction_denied"])
 	}
+	if payload["entity_type"] != "turn" {
+		t.Fatalf("expected entity_type turn, got %v", payload["entity_type"])
+	}
+	if payload["entity_id"] != turn.ID {
+		t.Fatalf("expected entity_id %s, got %v", turn.ID, payload["entity_id"])
+	}
+	if payload["previous_state"] != "none" {
+		t.Fatalf("expected previous_state none, got %v", payload["previous_state"])
+	}
+	if payload["next_state"] != string(TurnStatusActive) {
+		t.Fatalf("expected next_state active, got %v", payload["next_state"])
+	}
+	if payload["cause"] != "turn_create_requested" {
+		t.Fatalf("expected cause turn_create_requested, got %v", payload["cause"])
+	}
 }
 
 func TestContextManifest_RecordPreservesRedactionState(t *testing.T) {

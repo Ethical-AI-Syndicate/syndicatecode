@@ -91,6 +91,39 @@ func TestApprovalManager_ExpiryCancelsPending(t *testing.T) {
 	}
 }
 
+func TestApprovalManager_ExpiryEmitsTransitionCausality(t *testing.T) {
+	transitions := make([]ApprovalTransition, 0)
+	mgr := NewApprovalManager(1*time.Millisecond, WithTransitionRecorder(func(transition ApprovalTransition) {
+		transitions = append(transitions, transition)
+	}))
+
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil)
+	if err != nil {
+		t.Fatalf("propose failed: %v", err)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	_ = mgr.ListPending("")
+
+	if len(transitions) < 2 {
+		t.Fatalf("expected at least 2 transitions (proposed->pending and pending->cancelled), got %d", len(transitions))
+	}
+
+	last := transitions[len(transitions)-1]
+	if last.ApprovalID != approval.ID {
+		t.Fatalf("expected transition for approval %s, got %s", approval.ID, last.ApprovalID)
+	}
+	if last.FromState != ApprovalStatePending {
+		t.Fatalf("expected from_state pending, got %s", last.FromState)
+	}
+	if last.ToState != ApprovalStateCancelled {
+		t.Fatalf("expected to_state cancelled, got %s", last.ToState)
+	}
+	if last.Trigger != "expired" {
+		t.Fatalf("expected trigger expired, got %s", last.Trigger)
+	}
+}
+
 func TestHandleApprovalsAndDecision(t *testing.T) {
 	server := newApprovalTestServer(t)
 
@@ -106,7 +139,6 @@ func TestHandleApprovalsAndDecision(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil {
 		t.Fatalf("failed to decode approval: %v", err)
 	}
-
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil)
 	listRec := httptest.NewRecorder()
 	server.handleApprovals(listRec, listReq)
@@ -128,6 +160,80 @@ func TestHandleApprovalsAndDecision(t *testing.T) {
 	}
 	if final.State != ApprovalStateExecuted {
 		t.Fatalf("expected executed state, got %s", final.State)
+	}
+}
+
+func TestHandleToolExecute_ApprovalTransitionEventsCarryCausalityPayload(t *testing.T) {
+	server := newApprovalTestServer(t)
+
+	body := bytes.NewBufferString(`{"session_id":"session-123","tool_name":"write_file","input":{"path":"/tmp/x.txt","content":"hello"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+	server.handleToolExecute(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for pending approval, got %d", rec.Code)
+	}
+
+	var approval Approval
+	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil {
+		t.Fatalf("failed to decode approval: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on approve, got %d", decisionRec.Code)
+	}
+
+	events, err := server.eventStore.QueryBySession(context.Background(), approval.SessionID)
+	if err != nil {
+		t.Fatalf("failed querying events: %v", err)
+	}
+
+	transitionPayloads := make([]map[string]interface{}, 0)
+	for _, event := range events {
+		if event.EventType != "approval.transition" {
+			continue
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("failed to decode transition payload: %v", err)
+		}
+		transitionPayloads = append(transitionPayloads, payload)
+	}
+
+	if len(transitionPayloads) != 3 {
+		t.Fatalf("expected 3 approval.transition events, got %d", len(transitionPayloads))
+	}
+
+	if transitionPayloads[0]["entity_type"] != "approval" {
+		t.Fatalf("expected entity_type approval, got %v", transitionPayloads[0]["entity_type"])
+	}
+	if transitionPayloads[0]["entity_id"] != approval.ID {
+		t.Fatalf("expected entity_id %s, got %v", approval.ID, transitionPayloads[0]["entity_id"])
+	}
+	if transitionPayloads[0]["previous_state"] != "proposed" || transitionPayloads[0]["next_state"] != "pending" {
+		t.Fatalf("expected proposed->pending transition, got %v->%v", transitionPayloads[0]["previous_state"], transitionPayloads[0]["next_state"])
+	}
+	if transitionPayloads[0]["cause"] != "tool_execute_requested" {
+		t.Fatalf("expected cause tool_execute_requested, got %v", transitionPayloads[0]["cause"])
+	}
+
+	relatedIDs, ok := transitionPayloads[0]["related_ids"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected related_ids object, got %T", transitionPayloads[0]["related_ids"])
+	}
+	if relatedIDs["session_id"] != "session-123" {
+		t.Fatalf("expected related_ids.session_id session-123, got %v", relatedIDs["session_id"])
+	}
+
+	if transitionPayloads[1]["previous_state"] != "pending" || transitionPayloads[1]["next_state"] != "approved" {
+		t.Fatalf("expected pending->approved transition, got %v->%v", transitionPayloads[1]["previous_state"], transitionPayloads[1]["next_state"])
+	}
+	if transitionPayloads[2]["previous_state"] != "approved" || transitionPayloads[2]["next_state"] != "executed" {
+		t.Fatalf("expected approved->executed transition, got %v->%v", transitionPayloads[2]["previous_state"], transitionPayloads[2]["next_state"])
 	}
 }
 
@@ -196,7 +302,7 @@ func newApprovalTestServer(t *testing.T) *Server {
 	})
 
 	return &Server{
-		approvalMgr:  NewApprovalManager(10 * time.Minute),
+		approvalMgr:  NewApprovalManager(10*time.Minute, WithTransitionRecorder(newApprovalTransitionRecorder(eventStore))),
 		toolRegistry: registry,
 		toolExecutor: executor,
 		eventStore:   eventStore,
