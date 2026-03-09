@@ -46,20 +46,52 @@ type Approval struct {
 	Call           tools.ToolCall   `json:"call"`
 }
 
-type ApprovalManager struct {
-	mu     sync.RWMutex
-	items  map[string]*Approval
-	expiry time.Duration
+type ApprovalTransition struct {
+	ApprovalID    string
+	SessionID     string
+	ToolName      string
+	ArgumentsHash string
+	SideEffect    tools.SideEffect
+	FromState     ApprovalState
+	ToState       ApprovalState
+	Trigger       string
+	Decision      string
+	Reason        string
+	Timestamp     time.Time
 }
 
-func NewApprovalManager(expiry time.Duration) *ApprovalManager {
+type ApprovalTransitionRecorder func(ApprovalTransition)
+
+type ApprovalManagerOption func(*ApprovalManager)
+
+func WithTransitionRecorder(recorder ApprovalTransitionRecorder) ApprovalManagerOption {
+	return func(manager *ApprovalManager) {
+		manager.transitionRecorder = recorder
+	}
+}
+
+type ApprovalManager struct {
+	mu                 sync.RWMutex
+	items              map[string]*Approval
+	expiry             time.Duration
+	transitionRecorder ApprovalTransitionRecorder
+}
+
+func NewApprovalManager(expiry time.Duration, options ...ApprovalManagerOption) *ApprovalManager {
 	if expiry <= 0 {
 		expiry = 15 * time.Minute
 	}
-	return &ApprovalManager{
+	manager := &ApprovalManager{
 		items:  make(map[string]*Approval),
 		expiry: expiry,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(manager)
+		}
+	}
+
+	return manager
 }
 
 func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEffect tools.SideEffect, paths []string) (*Approval, error) {
@@ -91,6 +123,8 @@ func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEff
 	m.items[approval.ID] = approval
 	m.mu.Unlock()
 
+	m.recordTransition(approval, ApprovalStateProposed, ApprovalStatePending, "tool_execute_requested", "", "", now)
+
 	copy := *approval
 	return &copy, nil
 }
@@ -103,8 +137,10 @@ func (m *ApprovalManager) ListPending(sessionID string) []Approval {
 	pending := make([]Approval, 0)
 	for _, approval := range m.items {
 		if approval.State == ApprovalStatePending && now.After(approval.ExpiresAt) {
+			fromState := approval.State
 			approval.State = ApprovalStateCancelled
 			approval.UpdatedAt = now
+			m.recordTransition(approval, fromState, ApprovalStateCancelled, "expired", "", "", now)
 		}
 		if approval.State != ApprovalStatePending {
 			continue
@@ -149,6 +185,7 @@ func (m *ApprovalManager) Decide(id, decision, reason string) (*Approval, error)
 	}
 
 	var nextState ApprovalState
+	fromState := approval.State
 	switch decision {
 	case "approve":
 		nextState = ApprovalStateApproved
@@ -164,6 +201,7 @@ func (m *ApprovalManager) Decide(id, decision, reason string) (*Approval, error)
 	}
 
 	approval.State = nextState
+	m.recordTransition(approval, fromState, nextState, "user_decision", decision, reason, now)
 
 	approval.UpdatedAt = now
 	copy := *approval
@@ -186,9 +224,32 @@ func (m *ApprovalManager) MarkExecuted(id string) error {
 		return fmt.Errorf("%w: %v", ErrInvalidApprovalState, err)
 	}
 
+	fromState := approval.State
 	approval.State = ApprovalStateExecuted
-	approval.UpdatedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	approval.UpdatedAt = now
+	m.recordTransition(approval, fromState, ApprovalStateExecuted, "approved_execution", "approve", approval.DecisionReason, now)
 	return nil
+}
+
+func (m *ApprovalManager) recordTransition(approval *Approval, fromState, toState ApprovalState, trigger, decision, reason string, timestamp time.Time) {
+	if m.transitionRecorder == nil || approval == nil {
+		return
+	}
+
+	m.transitionRecorder(ApprovalTransition{
+		ApprovalID:    approval.ID,
+		SessionID:     approval.SessionID,
+		ToolName:      approval.ToolName,
+		ArgumentsHash: approval.ArgumentsHash,
+		SideEffect:    approval.SideEffect,
+		FromState:     fromState,
+		ToState:       toState,
+		Trigger:       trigger,
+		Decision:      decision,
+		Reason:        reason,
+		Timestamp:     timestamp,
+	})
 }
 
 func hashToolCall(call tools.ToolCall) (string, error) {
