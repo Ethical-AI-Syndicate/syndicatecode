@@ -232,6 +232,29 @@ func (m *ApprovalManager) MarkExecuted(id string) error {
 	return nil
 }
 
+func (m *ApprovalManager) Snapshot() []Approval {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	items := make([]Approval, 0, len(m.items))
+	for _, approval := range m.items {
+		items = append(items, *approval)
+	}
+
+	return items
+}
+
+func (m *ApprovalManager) ReplaceAll(items []Approval) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.items = make(map[string]*Approval, len(items))
+	for i := range items {
+		copy := items[i]
+		m.items[copy.ID] = &copy
+	}
+}
+
 func (m *ApprovalManager) recordTransition(approval *Approval, fromState, toState ApprovalState, trigger, decision, reason string, timestamp time.Time) {
 	if m.transitionRecorder == nil || approval == nil {
 		return
