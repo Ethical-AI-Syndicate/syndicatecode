@@ -195,6 +195,19 @@ func (s *EventStore) migrate() error {
 	return err
 }
 
+// ArtifactRecord is a stored reference to an artifact blob.
+type ArtifactRecord struct {
+	ID             string     `json:"id"`
+	SessionID      string     `json:"session_id,omitempty"`
+	TurnID         string     `json:"turn_id,omitempty"`
+	Kind           string     `json:"kind"`
+	StoragePath    string     `json:"storage_path"`
+	SHA256         string     `json:"sha256"`
+	RedactionState string     `json:"redaction_state,omitempty"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
 type Event struct {
 	ID            string          `json:"event_id"`
 	SessionID     string          `json:"session_id"`
@@ -322,4 +335,101 @@ func (s *EventStore) CleanupExpired(ctx context.Context, threshold time.Time) (C
 	}
 
 	return result, nil
+}
+
+// StoreArtifact inserts an artifact reference record.
+func (s *EventStore) StoreArtifact(ctx context.Context, a ArtifactRecord) error {
+	var sessionID, turnID, redactionState, expiresAt interface{}
+	if a.SessionID != "" {
+		sessionID = a.SessionID
+	}
+	if a.TurnID != "" {
+		turnID = a.TurnID
+	}
+	if a.RedactionState != "" {
+		redactionState = a.RedactionState
+	}
+	if a.ExpiresAt != nil {
+		expiresAt = a.ExpiresAt.Format(time.RFC3339)
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO artifacts (id, session_id, turn_id, kind, storage_path, sha256, redaction_state, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, sessionID, turnID, a.Kind, a.StoragePath, a.SHA256,
+		redactionState, expiresAt, a.CreatedAt.Format(time.RFC3339),
+	)
+	return err
+}
+
+// GetArtifact retrieves a single artifact by ID. Returns an error if not found.
+func (s *EventStore) GetArtifact(ctx context.Context, id string) (ArtifactRecord, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, COALESCE(session_id,''), COALESCE(turn_id,''), kind, storage_path,
+		        COALESCE(sha256,''), COALESCE(redaction_state,''), COALESCE(expires_at,''), created_at
+		 FROM artifacts WHERE id = ?`, id,
+	)
+	return scanArtifact(row)
+}
+
+// ListArtifactsBySession returns all artifact records for a given session.
+func (s *EventStore) ListArtifactsBySession(ctx context.Context, sessionID string) ([]ArtifactRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, COALESCE(session_id,''), COALESCE(turn_id,''), kind, storage_path,
+		        COALESCE(sha256,''), COALESCE(redaction_state,''), COALESCE(expires_at,''), created_at
+		 FROM artifacts WHERE session_id = ? ORDER BY created_at`, sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var result []ArtifactRecord
+	for rows.Next() {
+		a, err := scanArtifactRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
+type artifactScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanArtifact(s artifactScanner) (ArtifactRecord, error) {
+	var a ArtifactRecord
+	var expiresAtStr, createdAtStr string
+	if err := s.Scan(&a.ID, &a.SessionID, &a.TurnID, &a.Kind, &a.StoragePath,
+		&a.SHA256, &a.RedactionState, &expiresAtStr, &createdAtStr); err != nil {
+		return ArtifactRecord{}, fmt.Errorf("artifact not found: %w", err)
+	}
+	if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+		a.CreatedAt = t
+	}
+	if expiresAtStr != "" {
+		if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
+			a.ExpiresAt = &t
+		}
+	}
+	return a, nil
+}
+
+func scanArtifactRow(rows *sql.Rows) (ArtifactRecord, error) {
+	var a ArtifactRecord
+	var expiresAtStr, createdAtStr string
+	if err := rows.Scan(&a.ID, &a.SessionID, &a.TurnID, &a.Kind, &a.StoragePath,
+		&a.SHA256, &a.RedactionState, &expiresAtStr, &createdAtStr); err != nil {
+		return ArtifactRecord{}, err
+	}
+	if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+		a.CreatedAt = t
+	}
+	if expiresAtStr != "" {
+		if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
+			a.ExpiresAt = &t
+		}
+	}
+	return a, nil
 }

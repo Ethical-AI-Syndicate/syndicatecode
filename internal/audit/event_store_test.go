@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -187,6 +188,154 @@ func TestEventStore_CleanupExpiredIsIdempotent(t *testing.T) {
 	}
 	if result2.ArtifactsDeleted != 0 {
 		t.Errorf("expected 0 on second call, got %d", result2.ArtifactsDeleted)
+	}
+}
+
+func TestEventStore_StoreAndGetArtifact(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Pre-create parent rows required by FK constraints.
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO sessions (id, repo_path, trust_tier, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"sess-001", "/repo", "trusted", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO turns (id, session_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"turn-001", "sess-001", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert turn: %v", err)
+	}
+
+	artifact := ArtifactRecord{
+		ID:          "art-001",
+		SessionID:   "sess-001",
+		TurnID:      "turn-001",
+		Kind:        "log",
+		StoragePath: "/artifacts/sess-001/turn-001/output.log",
+		SHA256:      "abc123",
+		CreatedAt:   now,
+	}
+
+	if err := store.StoreArtifact(ctx, artifact); err != nil {
+		t.Fatalf("StoreArtifact: %v", err)
+	}
+
+	got, err := store.GetArtifact(ctx, "art-001")
+	if err != nil {
+		t.Fatalf("GetArtifact: %v", err)
+	}
+
+	if got.ID != artifact.ID {
+		t.Errorf("ID: got %q, want %q", got.ID, artifact.ID)
+	}
+	if got.SHA256 != artifact.SHA256 {
+		t.Errorf("SHA256: got %q, want %q", got.SHA256, artifact.SHA256)
+	}
+	if got.StoragePath != artifact.StoragePath {
+		t.Errorf("StoragePath: got %q, want %q", got.StoragePath, artifact.StoragePath)
+	}
+}
+
+func TestEventStore_GetArtifactNotFound(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	_, err = store.GetArtifact(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for missing artifact, got nil")
+	}
+}
+
+func TestEventStore_ListArtifactsBySession(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Pre-create parent sessions required by FK constraints.
+	for _, sessID := range []string{"sess-x", "sess-y"} {
+		if _, err := store.db.ExecContext(ctx,
+			`INSERT INTO sessions (id, repo_path, trust_tier, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			sessID, "/repo", "trusted", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+		); err != nil {
+			t.Fatalf("insert session %s: %v", sessID, err)
+		}
+	}
+
+	for i, id := range []string{"art-a", "art-b"} {
+		if err := store.StoreArtifact(ctx, ArtifactRecord{
+			ID: id, SessionID: "sess-x", Kind: "log",
+			StoragePath: fmt.Sprintf("/a/%d", i), SHA256: fmt.Sprintf("hash%d", i),
+			CreatedAt: now,
+		}); err != nil {
+			t.Fatalf("StoreArtifact %s: %v", id, err)
+		}
+	}
+	// Artifact for different session — must not appear.
+	if err := store.StoreArtifact(ctx, ArtifactRecord{
+		ID: "art-other", SessionID: "sess-y", Kind: "log",
+		StoragePath: "/other", SHA256: "hashother", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("StoreArtifact other: %v", err)
+	}
+
+	artifacts, err := store.ListArtifactsBySession(ctx, "sess-x")
+	if err != nil {
+		t.Fatalf("ListArtifactsBySession: %v", err)
+	}
+	if len(artifacts) != 2 {
+		t.Errorf("expected 2 artifacts, got %d", len(artifacts))
+	}
+}
+
+func TestEventStore_StoreArtifactHashIntegrity(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	original := ArtifactRecord{
+		ID: "art-hash", Kind: "log",
+		StoragePath: "/a/b/c", SHA256: "deadbeef", CreatedAt: now,
+	}
+	if err := store.StoreArtifact(ctx, original); err != nil {
+		t.Fatalf("StoreArtifact: %v", err)
+	}
+
+	got, err := store.GetArtifact(ctx, "art-hash")
+	if err != nil {
+		t.Fatalf("GetArtifact: %v", err)
+	}
+	if got.SHA256 != original.SHA256 {
+		t.Errorf("hash mismatch: stored %q, retrieved %q", original.SHA256, got.SHA256)
 	}
 }
 
