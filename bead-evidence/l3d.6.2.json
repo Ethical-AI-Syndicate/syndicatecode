@@ -1,0 +1,51 @@
+{
+  "bead_id": "l3d.6.2",
+  "bead_issue_id": "SyndicateCode-l3d.6.2",
+  "bead_issue_status": "in_progress",
+  "generated_at_utc": "2026-03-09T19:01:47Z",
+  "generator_version": "v2",
+  "head_sha": "d3b0b26d0c80706f457fae5913a63887861660cd",
+  "range": "origin/master..HEAD",
+  "commits": [],
+  "changed_files": [],
+  "changed_go_files": [],
+  "changed_test_files": [],
+  "linked_tests": [
+    {
+      "file": "internal/patch/validator_test.go",
+      "line": 8,
+      "test_name": "TestPreimageValidation_Bead_l3d_6_2",
+      "beads": [
+        "l3d.6.2"
+      ]
+    },
+    {
+      "file": "internal/patch/validator_test.go",
+      "line": 148,
+      "test_name": "TestConflictDetection_Bead_l3d_6_2",
+      "beads": [
+        "l3d.6.2"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": false,
+    "reasons": [
+      "no commits linked to bead in configured range",
+      "no changed files captured for bead range"
+    ]
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
