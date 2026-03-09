@@ -29,8 +29,8 @@ func (m *mockAPI) CreateSession(ctx context.Context, req CreateSessionRequest) (
 	return s, nil
 }
 
-func (m *mockAPI) CreateTurn(ctx context.Context, req CreateTurnRequest) (*Turn, error) {
-	return &Turn{ID: "t-1", SessionID: req.SessionID, Message: req.Message}, nil
+func (m *mockAPI) CreateTurn(ctx context.Context, sessionID string, req CreateTurnRequest) (*Turn, error) {
+	return &Turn{ID: "t-1", SessionID: sessionID, Message: req.Message}, nil
 }
 
 func (m *mockAPI) ListApprovals(ctx context.Context) ([]Approval, error) {
@@ -42,8 +42,9 @@ func (m *mockAPI) DecideApproval(ctx context.Context, approvalID string, req Dec
 	return &Approval{ID: approvalID, State: "executed"}, nil
 }
 
-func (m *mockAPI) GetTurnContext(ctx context.Context, turnID string) ([]ContextFragment, error) {
-	return m.contextByTurn[turnID], nil
+func (m *mockAPI) GetTurnContext(ctx context.Context, sessionID, turnID string) ([]ContextFragment, error) {
+	key := sessionID + ":" + turnID
+	return m.contextByTurn[key], nil
 }
 
 func TestApp_HelpAndQuit(t *testing.T) {
@@ -87,10 +88,10 @@ func TestApp_ApprovalCommands(t *testing.T) {
 func TestApp_ContextCommand(t *testing.T) {
 	api := &mockAPI{
 		contextByTurn: map[string][]ContextFragment{
-			"t-1": {{SourceType: "file", SourceRef: "main.go", TokenCount: 10}},
+			"s-1:t-1": {{SourceType: "file", SourceRef: "main.go", TokenCount: 10}},
 		},
 	}
-	in := strings.NewReader("context t-1\nquit\n")
+	in := strings.NewReader("context s-1 t-1\nquit\n")
 	out := &bytes.Buffer{}
 	app := NewApp(api, in, out)
 

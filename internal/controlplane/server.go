@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -275,7 +276,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		map[string]jsonObjectSchema{http.MethodPost: sessionsCreateResponseSchema()},
 		http.HandlerFunc(s.handleSessions),
 	))
-	mux.HandleFunc("/api/v1/sessions/", s.handleSessionByID)
+	mux.HandleFunc("/api/v1/sessions/", s.handleSessionOrTurn)
 	mux.HandleFunc("/api/v1/turns", s.handleTurns)
 	mux.HandleFunc("/api/v1/turns/", s.handleTurnByID)
 	mux.HandleFunc("/api/v1/approvals", s.handleApprovals)
@@ -337,6 +338,22 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(created); err != nil {
 		log.Printf("failed to encode created session: %v", err)
 	}
+}
+
+func (s *Server) handleSessionOrTurn(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+
+	if len(parts) >= 2 && parts[1] == "turns" {
+		if len(parts) == 2 {
+			s.handleSessionTurns(w, r)
+		} else if len(parts) >= 3 {
+			s.handleSessionTurnByID(w, r)
+		}
+		return
+	}
+
+	s.handleSessionByID(w, r)
 }
 
 func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
@@ -487,6 +504,151 @@ func (s *Server) handleTurnContext(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(fragments); err != nil {
 		log.Printf("failed to encode fragments: %v", err)
 	}
+}
+
+func (s *Server) handleSessionTurns(w http.ResponseWriter, r *http.Request) {
+	sessionID := extractSessionID(r.URL.Path)
+	if sessionID == "" {
+		http.Error(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.listSessionTurns(w, r, sessionID)
+	case http.MethodPost:
+		s.createSessionTurn(w, r, sessionID)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) listSessionTurns(w http.ResponseWriter, r *http.Request, sessionID string) {
+	_, err := s.sessionMgr.Get(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	turns, err := s.turnMgr.ListBySession(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := json.NewEncoder(w).Encode(turns); err != nil {
+		log.Printf("failed to encode turns: %v", err)
+	}
+}
+
+func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessionID string) {
+	_, err := s.sessionMgr.Get(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Message string   `json:"message"`
+		Files   []string `json:"files,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Message == "" {
+		http.Error(w, "message is required", http.StatusBadRequest)
+		return
+	}
+
+	turn, err := s.turnMgr.Create(r.Context(), sessionID, req.Message)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(turn); err != nil {
+		log.Printf("failed to encode turn: %v", err)
+	}
+}
+
+func (s *Server) handleSessionTurnByID(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+
+	sessionIDMatch := regexp.MustCompile(`/api/v1/sessions/([^/]+)`).FindStringSubmatch(path)
+	if sessionIDMatch == nil {
+		http.Error(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+	sessionID := sessionIDMatch[1]
+
+	if strings.Contains(path, "/context") {
+		s.handleSessionTurnContext(w, r, sessionID)
+		return
+	}
+
+	turnIDMatch := regexp.MustCompile(`/api/v1/sessions/[^/]+/turns/([^/]+)`).FindStringSubmatch(path)
+	if turnIDMatch == nil {
+		http.Error(w, "turn_id required", http.StatusBadRequest)
+		return
+	}
+	turnID := turnIDMatch[1]
+
+	turn, err := s.turnMgr.Get(r.Context(), turnID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if turn.SessionID != sessionID {
+		http.Error(w, "turn does not belong to session", http.StatusNotFound)
+		return
+	}
+	if err := json.NewEncoder(w).Encode(turn); err != nil {
+		log.Printf("failed to encode turn: %v", err)
+	}
+}
+
+func (s *Server) handleSessionTurnContext(w http.ResponseWriter, r *http.Request, sessionID string) {
+	pathParts := strings.Split(r.URL.Path, "/")
+	for i, part := range pathParts {
+		if part == "turns" && i+1 < len(pathParts) {
+			turnID := pathParts[i+1]
+			if strings.Contains(turnID, "/context") {
+				turnID = strings.TrimSuffix(turnID, "/context")
+			}
+
+			turn, err := s.turnMgr.Get(r.Context(), turnID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			if turn.SessionID != sessionID {
+				http.Error(w, "turn does not belong to session", http.StatusNotFound)
+				return
+			}
+
+			fragments, err := s.ctxManifest.Get(r.Context(), turnID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := json.NewEncoder(w).Encode(fragments); err != nil {
+				log.Printf("failed to encode fragments: %v", err)
+			}
+			return
+		}
+	}
+	http.Error(w, "turn_id required", http.StatusBadRequest)
+}
+
+func extractSessionID(path string) string {
+	parts := strings.Split(strings.TrimPrefix(path, "/api/v1/sessions/"), "/")
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+	return ""
 }
 
 func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
