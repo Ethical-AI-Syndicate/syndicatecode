@@ -346,14 +346,32 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if s.sessionMgr != nil {
+		if _, err := s.sessionMgr.Get(r.Context(), sessionID); err != nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+	}
+
 	events, err := s.eventStore.QueryBySession(r.Context(), sessionID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if len(events) == 0 {
+	if s.sessionMgr == nil && len(events) == 0 {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
+	}
+
+	eventType := strings.TrimSpace(r.URL.Query().Get("event_type"))
+	if eventType != "" {
+		filtered := make([]audit.Event, 0, len(events))
+		for _, event := range events {
+			if event.EventType == eventType {
+				filtered = append(filtered, event)
+			}
+		}
+		events = filtered
 	}
 
 	if err := json.NewEncoder(w).Encode(events); err != nil {

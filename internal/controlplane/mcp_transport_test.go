@@ -93,6 +93,64 @@ func TestHandleToolExecute_RemoteMCPCallWritesAuditMetadata(t *testing.T) {
 	}
 }
 
+func TestHandleSessionByID_FilteredEventsIncludeMCPRoutingTrace(t *testing.T) {
+	server, _, sessionID := newMCPTransportTestServer(t)
+
+	body := bytes.NewBufferString(`{"session_id":"` + sessionID + `","tool_name":"remote_mcp_fetch","input":{"destination":"https://allowed.example.com","query":"status"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+
+	server.handleToolExecute(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected pending approval for side-effecting remote MCP tool, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var approval Approval
+	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil {
+		t.Fatalf("failed to decode approval response: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusOK {
+		t.Fatalf("expected approval execution success, got %d: %s", decisionRec.Code, decisionRec.Body.String())
+	}
+
+	eventsReq := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+sessionID+"/events?event_type=mcp.call", nil)
+	eventsRec := httptest.NewRecorder()
+	server.handleSessionByID(eventsRec, eventsReq)
+	if eventsRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for filtered session events, got %d: %s", eventsRec.Code, eventsRec.Body.String())
+	}
+
+	var events []audit.Event
+	if err := json.Unmarshal(eventsRec.Body.Bytes(), &events); err != nil {
+		t.Fatalf("failed to decode filtered replay events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly one mcp.call event, got %d", len(events))
+	}
+	if events[0].EventType != "mcp.call" {
+		t.Fatalf("expected mcp.call event type, got %s", events[0].EventType)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatalf("failed to decode mcp.call payload from replay endpoint: %v", err)
+	}
+	if payload["transport"] != "remote" {
+		t.Fatalf("expected transport=remote, got %v", payload["transport"])
+	}
+	if payload["server_id"] != "inventory.remote" {
+		t.Fatalf("expected server_id=inventory.remote, got %v", payload["server_id"])
+	}
+	if payload["destination"] != "https://allowed.example.com" {
+		t.Fatalf("expected destination metadata, got %v", payload["destination"])
+	}
+}
+
 func newMCPTransportTestServer(t *testing.T) (*Server, *audit.EventStore, string) {
 	t.Helper()
 
