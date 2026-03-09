@@ -70,7 +70,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	}
 
 	sessionMgr := session.NewManager(eventStore)
-	turnMgr := ctxmgr.NewTurnManager(eventStore, sessionMgr)
+	turnMgr := ctxmgr.NewTurnManagerWithPolicy(eventStore, sessionMgr, newContextRedactionPolicy(secrets.NewPolicyExecutor(nil)))
 	ctxManifest := ctxmgr.NewContextManifest(eventStore)
 
 	toolRegistry, toolExecutor, err := initializeTooling(ctx, eventStore)
