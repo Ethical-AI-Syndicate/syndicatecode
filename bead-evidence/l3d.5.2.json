@@ -1,13 +1,27 @@
 {
   "bead_id": "l3d.5.2",
   "bead_issue_id": "bead-l3d.5.2-routing-engine-l3d.5.2",
-  "generated_at_utc": "2026-03-09T19:49:19Z",
+  "generated_at_utc": "2026-03-09T20:23:50Z",
   "generator_version": "v2",
-  "head_sha": "ae514814357242ab14fb4f9eee6df12df1dd386a",
+  "head_sha": "e1c11d3dd30fff1cd1ece8288b86cc72aede5dd8",
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "195229e2a4020b25263f5244700c144837ef0b34",
+      "sha": "e1c11d3dd30fff1cd1ece8288b86cc72aede5dd8",
+      "subject": "chore(ci): retrigger pipeline after master sync [l3d.5.2]",
+      "beads": [
+        "l3d.5.2"
+      ]
+    },
+    {
+      "sha": "a97baa893469feeaa70df6ec36f0a4183532e9c5",
+      "subject": "bd:l3d.5.2 record evidence after full CI pass [l3d.5.2]",
+      "beads": [
+        "l3d.5.2"
+      ]
+    },
+    {
+      "sha": "3d632bc92b2a33842357739e83e613bfd94d686f",
       "subject": "test(policy): add bead-linked routing determinism coverage [l3d.5.2]",
       "beads": [
         "l3d.5.2"
@@ -15,19 +29,12 @@
     }
   ],
   "changed_files": [
-    ".gitlab-ci.yml",
-    "internal/policy/routing_test.go",
-    "tools/beads/main.go",
-    "tools/beads/main_test.go",
-    "tools/verify/main.go"
+    "bead-evidence/l3d.5.2.json",
+    "internal/policy/routing_test.go"
   ],
-  "changed_go_files": [
-    "tools/beads/main.go",
-    "tools/verify/main.go"
-  ],
+  "changed_go_files": [],
   "changed_test_files": [
-    "internal/policy/routing_test.go",
-    "tools/beads/main_test.go"
+    "internal/policy/routing_test.go"
   ],
   "linked_tests": [
     {
