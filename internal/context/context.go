@@ -13,14 +13,17 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/state"
 )
 
-type TurnStatus string
+type TurnStatus = state.TurnState
 
 const (
-	TurnStatusActive    TurnStatus = "active"
-	TurnStatusCompleted TurnStatus = "completed"
-	TurnStatusFailed    TurnStatus = "failed"
+	TurnStatusActive           TurnStatus = state.TurnStateActive
+	TurnStatusAwaitingApproval TurnStatus = state.TurnStateAwaitingApproval
+	TurnStatusCompleted        TurnStatus = state.TurnStateCompleted
+	TurnStatusFailed           TurnStatus = state.TurnStateFailed
+	TurnStatusCancelled        TurnStatus = state.TurnStateCancelled
 )
 
 type Turn struct {
