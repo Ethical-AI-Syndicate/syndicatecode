@@ -165,7 +165,8 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 			OutputSchema: map[string]tools.FieldSchema{
 				"bytes_written": {Type: "integer", Description: "bytes written"},
 			},
-			Limits: tools.ExecutionLimits{TimeoutSeconds: 10, MaxOutputBytes: 512 * 1024},
+			Limits:   tools.ExecutionLimits{TimeoutSeconds: 10, MaxOutputBytes: 512 * 1024},
+			Security: tools.SecurityMetadata{FilesystemScope: "repo"},
 		},
 		{
 			Name:             "run_tests",
@@ -180,7 +181,8 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 				"stdout":    {Type: "string", Description: "stdout"},
 				"stderr":    {Type: "string", Description: "stderr"},
 			},
-			Limits: tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+			Limits:   tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+			Security: tools.SecurityMetadata{FilesystemScope: "repo"},
 		},
 		{
 			Name:             "run_lint",
@@ -195,7 +197,8 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 				"stdout":    {Type: "string", Description: "stdout"},
 				"stderr":    {Type: "string", Description: "stderr"},
 			},
-			Limits: tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+			Limits:   tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+			Security: tools.SecurityMetadata{FilesystemScope: "repo"},
 		},
 		{
 			Name:             "restricted_shell",
@@ -211,7 +214,8 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 				"stdout":    {Type: "string", Description: "stdout"},
 				"stderr":    {Type: "string", Description: "stderr"},
 			},
-			Limits: tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+			Limits:   tools.ExecutionLimits{TimeoutSeconds: 120, MaxOutputBytes: 1024 * 1024},
+			Security: tools.SecurityMetadata{FilesystemScope: "repo"},
 		},
 		{
 			Name:             "apply_patch",
@@ -224,7 +228,8 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 			OutputSchema: map[string]tools.FieldSchema{
 				"files_modified": {Type: "array", Description: "modified repository files"},
 			},
-			Limits: tools.ExecutionLimits{TimeoutSeconds: 30, MaxOutputBytes: 256 * 1024},
+			Limits:   tools.ExecutionLimits{TimeoutSeconds: 30, MaxOutputBytes: 256 * 1024},
+			Security: tools.SecurityMetadata{FilesystemScope: "repo"},
 		},
 	}
 

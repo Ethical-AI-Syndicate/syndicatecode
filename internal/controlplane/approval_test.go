@@ -265,6 +265,7 @@ func newApprovalTestServer(t *testing.T) *Server {
 		InputSchema:      map[string]tools.FieldSchema{"path": {Type: "string"}, "content": {Type: "string"}},
 		OutputSchema:     map[string]tools.FieldSchema{"bytes_written": {Type: "integer"}},
 		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024, AllowedPaths: []string{"/tmp"}},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
 	}); err != nil {
 		t.Fatalf("register write_file failed: %v", err)
 	}
@@ -276,6 +277,7 @@ func newApprovalTestServer(t *testing.T) *Server {
 		InputSchema:      map[string]tools.FieldSchema{"command": {Type: "string"}},
 		OutputSchema:     map[string]tools.FieldSchema{"exit_code": {Type: "integer"}},
 		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
 	}); err != nil {
 		t.Fatalf("register restricted_shell failed: %v", err)
 	}
@@ -287,6 +289,7 @@ func newApprovalTestServer(t *testing.T) *Server {
 		InputSchema:      map[string]tools.FieldSchema{"patch": {Type: "string"}},
 		OutputSchema:     map[string]tools.FieldSchema{"files_modified": {Type: "array"}},
 		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
 	}); err != nil {
 		t.Fatalf("register apply_patch failed: %v", err)
 	}
