@@ -43,7 +43,8 @@ type Approval struct {
 	CreatedAt      time.Time        `json:"created_at"`
 	UpdatedAt      time.Time        `json:"updated_at"`
 	ExpiresAt      time.Time        `json:"expires_at"`
-	Call           tools.ToolCall   `json:"call"`
+	Call            tools.ToolCall   `json:"call"`
+	ExecutionContext json.RawMessage  `json:"execution_context,omitempty"`
 }
 
 type ApprovalTransition struct {
@@ -94,7 +95,7 @@ func NewApprovalManager(expiry time.Duration, options ...ApprovalManagerOption) 
 	return manager
 }
 
-func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEffect tools.SideEffect, paths []string) (*Approval, error) {
+func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEffect tools.SideEffect, paths []string, execCtx json.RawMessage) (*Approval, error) {
 	if call.ToolName == "" {
 		return nil, errors.New("tool name is required")
 	}
@@ -106,17 +107,18 @@ func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEff
 
 	now := time.Now().UTC()
 	approval := &Approval{
-		ID:            fmt.Sprintf("apr-%d", now.UnixNano()),
-		SessionID:     sessionID,
-		ToolName:      call.ToolName,
-		ArgumentsHash: hash,
-		SideEffect:    sideEffect,
-		AffectedPaths: append([]string(nil), paths...),
-		State:         ApprovalStatePending,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		ExpiresAt:     now.Add(m.expiry),
-		Call:          call,
+		ID:              fmt.Sprintf("apr-%d", now.UnixNano()),
+		SessionID:       sessionID,
+		ToolName:        call.ToolName,
+		ArgumentsHash:   hash,
+		SideEffect:      sideEffect,
+		AffectedPaths:   append([]string(nil), paths...),
+		State:           ApprovalStatePending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ExpiresAt:       now.Add(m.expiry),
+		Call:            call,
+		ExecutionContext: execCtx,
 	}
 
 	m.mu.Lock()

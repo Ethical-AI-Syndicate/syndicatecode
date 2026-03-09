@@ -18,7 +18,7 @@ func TestApprovalManager_ProposeAndApproveFlow(t *testing.T) {
 	mgr := NewApprovalManager(10 * time.Minute)
 	call := tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{"path": "a.go"}}
 
-	approval, err := mgr.Propose("s1", call, tools.SideEffectWrite, []string{"a.go"})
+	approval, err := mgr.Propose("s1", call, tools.SideEffectWrite, []string{"a.go"}, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestApprovalManager_ProposeAndApproveFlow(t *testing.T) {
 
 func TestApprovalManager_Deny(t *testing.T) {
 	mgr := NewApprovalManager(10 * time.Minute)
-	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil)
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestApprovalManager_Deny(t *testing.T) {
 
 func TestApprovalManager_ExpiryCancelsPending(t *testing.T) {
 	mgr := NewApprovalManager(1 * time.Millisecond)
-	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil)
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestApprovalManager_ExpiryEmitsTransitionCausality(t *testing.T) {
 		transitions = append(transitions, transition)
 	}))
 
-	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil)
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -384,6 +384,45 @@ func TestHandleToolExecuteRedactsSecrets(t *testing.T) {
 	}
 	if !response.RedactionNotices[0].MaterialImpact {
 		t.Fatalf("expected redaction notice to mark material impact")
+	}
+}
+
+func TestApprovalPropose_StoresExecutionContext(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewApprovalManager(5*time.Minute, nil)
+
+	call := tools.ToolCall{ToolName: "run_tests", SessionID: "sess-1"}
+	ctx := json.RawMessage(`{"executable":"go","args":["test","./..."],"isolation_level":"l1"}`)
+
+	approval, err := mgr.Propose("sess-1", call, tools.SideEffectExecute, []string{"/repo"}, ctx)
+	if err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+	if len(approval.ExecutionContext) == 0 {
+		t.Fatal("expected ExecutionContext to be set on approval")
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(approval.ExecutionContext, &decoded); err != nil {
+		t.Fatalf("ExecutionContext is not valid JSON: %v", err)
+	}
+	if decoded["executable"] != "go" {
+		t.Errorf("executable: got %v, want 'go'", decoded["executable"])
+	}
+}
+
+func TestApprovalPropose_NilContextIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewApprovalManager(5*time.Minute, nil)
+	call := tools.ToolCall{ToolName: "echo", SessionID: "sess-2"}
+
+	approval, err := mgr.Propose("sess-2", call, tools.SideEffectNone, nil, nil)
+	if err != nil {
+		t.Fatalf("Propose with nil context: %v", err)
+	}
+	if approval.ExecutionContext != nil {
+		t.Error("expected nil ExecutionContext when none provided")
 	}
 }
 
