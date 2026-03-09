@@ -1,0 +1,78 @@
+{
+  "bead_id": "l3d.10.3",
+  "bead_issue_id": "bead-loop-3-l3d.10.3",
+  "generated_at_utc": "2026-03-09T19:39:15Z",
+  "generator_version": "v2",
+  "head_sha": "38f6cd12dcf91f1b7879750e9de1de3017963f85",
+  "range": "origin/master..HEAD",
+  "commits": [
+    {
+      "sha": "ac600570a4d38f7a604ea094f1c26e1156ac33b5",
+      "subject": "bd:l3d.10.3 implement soft/hard/tombstone session deletion semantics [l3d.10.3]",
+      "beads": [
+        "l3d.10.3"
+      ]
+    }
+  ],
+  "changed_files": [
+    "internal/audit/event_store.go",
+    "internal/session/manager.go",
+    "internal/session/manager_test.go",
+    "tools/beads/main.go",
+    "tools/beads/main_test.go",
+    "tools/verify/main.go"
+  ],
+  "changed_go_files": [
+    "internal/audit/event_store.go",
+    "internal/session/manager.go",
+    "tools/beads/main.go",
+    "tools/verify/main.go"
+  ],
+  "changed_test_files": [
+    "internal/session/manager_test.go",
+    "tools/beads/main_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/session/manager_test.go",
+      "line": 58,
+      "test_name": "TestManager_DeleteSoftHidesSession_Bead_l3d_10_3",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "file": "internal/session/manager_test.go",
+      "line": 88,
+      "test_name": "TestManager_DeleteHardRemovesSessionArtifacts_Bead_l3d_10_3",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "file": "internal/session/manager_test.go",
+      "line": 114,
+      "test_name": "TestManager_DeleteTombstoneKeepsMinimalAudit_Bead_l3d_10_3",
+      "beads": [
+        "l3d.10.3"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": true,
+    "reasons": null
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
