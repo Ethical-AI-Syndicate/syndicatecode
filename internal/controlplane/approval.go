@@ -9,18 +9,19 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/state"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
 
-type ApprovalState string
+type ApprovalState = state.ApprovalState
 
 const (
-	ApprovalStateProposed  ApprovalState = "proposed"
-	ApprovalStatePending   ApprovalState = "pending"
-	ApprovalStateApproved  ApprovalState = "approved"
-	ApprovalStateDenied    ApprovalState = "denied"
-	ApprovalStateExecuted  ApprovalState = "executed"
-	ApprovalStateCancelled ApprovalState = "cancelled"
+	ApprovalStateProposed  ApprovalState = state.ApprovalStateProposed
+	ApprovalStatePending   ApprovalState = state.ApprovalStatePending
+	ApprovalStateApproved  ApprovalState = state.ApprovalStateApproved
+	ApprovalStateDenied    ApprovalState = state.ApprovalStateDenied
+	ApprovalStateExecuted  ApprovalState = state.ApprovalStateExecuted
+	ApprovalStateCancelled ApprovalState = state.ApprovalStateCancelled
 )
 
 var (
@@ -147,15 +148,22 @@ func (m *ApprovalManager) Decide(id, decision, reason string) (*Approval, error)
 		return nil, ErrApprovalExpired
 	}
 
+	var nextState ApprovalState
 	switch decision {
 	case "approve":
-		approval.State = ApprovalStateApproved
+		nextState = ApprovalStateApproved
 	case "deny":
-		approval.State = ApprovalStateDenied
+		nextState = ApprovalStateDenied
 		approval.DecisionReason = reason
 	default:
 		return nil, ErrInvalidApprovalAction
 	}
+
+	if err := state.ValidateApprovalTransition(approval.State, nextState); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidApprovalState, err)
+	}
+
+	approval.State = nextState
 
 	approval.UpdatedAt = now
 	copy := *approval
@@ -172,6 +180,10 @@ func (m *ApprovalManager) MarkExecuted(id string) error {
 	}
 	if approval.State != ApprovalStateApproved {
 		return ErrInvalidApprovalState
+	}
+
+	if err := state.ValidateApprovalTransition(approval.State, ApprovalStateExecuted); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidApprovalState, err)
 	}
 
 	approval.State = ApprovalStateExecuted
