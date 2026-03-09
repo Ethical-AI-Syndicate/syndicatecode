@@ -18,6 +18,11 @@ type BoundarySpec struct {
 func DefaultPackageBoundarySpec() BoundarySpec {
 	return BoundarySpec{
 		Packages: map[string]PackageBoundary{
+			"cmd/cli": {
+				Owner:            "platform",
+				Responsibilities: []string{"bootstrap interactive CLI"},
+				AllowedImports:   []string{"pkg/tui"},
+			},
 			"cmd/server": {
 				Owner:            "platform",
 				Responsibilities: []string{"bootstrap control-plane server"},
@@ -26,7 +31,7 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/controlplane": {
 				Owner:            "controlplane",
 				Responsibilities: []string{"request orchestration", "session and turn coordination", "policy surface integration"},
-				AllowedImports:   []string{"internal/session", "internal/context", "internal/audit", "internal/tools", "internal/sandbox", "internal/state"},
+				AllowedImports:   []string{"internal/audit", "internal/context", "internal/mcp", "internal/patch", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
 			},
 			"internal/session": {
 				Owner:            "state",
@@ -36,7 +41,7 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/context": {
 				Owner:            "ai-systems",
 				Responsibilities: []string{"turn lifecycle", "context assembly", "token budgeting", "retrieval profile classification"},
-				AllowedImports:   []string{"internal/audit", "internal/session", "internal/state"},
+				AllowedImports:   []string{"internal/audit", "internal/secrets", "internal/session", "internal/state"},
 			},
 			"internal/state": {
 				Owner:            "state",
@@ -48,19 +53,54 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 				Responsibilities: []string{"event persistence", "event queries"},
 				AllowedImports:   []string{},
 			},
+			"internal/git": {
+				Owner:            "runtime",
+				Responsibilities: []string{"task-scoped git safety and provenance"},
+				AllowedImports:   []string{},
+			},
+			"internal/mcp": {
+				Owner:            "integrations",
+				Responsibilities: []string{"MCP plugin loading and registry integration"},
+				AllowedImports:   []string{"internal/tools"},
+			},
+			"internal/patch": {
+				Owner:            "runtime",
+				Responsibilities: []string{"patch parsing and repository-safe file edits"},
+				AllowedImports:   []string{},
+			},
+			"internal/policy": {
+				Owner:            "governance",
+				Responsibilities: []string{"policy contracts and evaluation surface"},
+				AllowedImports:   []string{},
+			},
+			"internal/secrets": {
+				Owner:            "security",
+				Responsibilities: []string{"secret detection, classification, and redaction policy"},
+				AllowedImports:   []string{},
+			},
 			"internal/tools": {
 				Owner:            "runtime",
 				Responsibilities: []string{"tool capability registry", "execution preflight checks"},
-				AllowedImports:   []string{},
+				AllowedImports:   []string{"internal/patch"},
 			},
 			"internal/sandbox": {
 				Owner:            "runtime",
 				Responsibilities: []string{"isolation-level runners", "resource limits", "execution controls"},
-				AllowedImports:   []string{},
+				AllowedImports:   []string{"internal/tools"},
 			},
 			"internal/validation": {
 				Owner:            "architecture",
 				Responsibilities: []string{"architecture and boundary validation"},
+				AllowedImports:   []string{},
+			},
+			"pkg/api": {
+				Owner:            "platform",
+				Responsibilities: []string{"stable API types and contract parsing"},
+				AllowedImports:   []string{},
+			},
+			"pkg/tui": {
+				Owner:            "platform",
+				Responsibilities: []string{"terminal UI rendering and API client interactions"},
 				AllowedImports:   []string{},
 			},
 		},

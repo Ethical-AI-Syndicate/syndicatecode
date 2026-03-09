@@ -49,3 +49,22 @@ func TestValidateImportsIgnoresStandardAndThirdPartyDependencies(t *testing.T) {
 		t.Fatalf("expected no violations for non-internal imports, got %d", len(violations))
 	}
 }
+
+func TestValidateImportsRejectsUndeclaredPkgDependency(t *testing.T) {
+	t.Parallel()
+
+	spec := BoundarySpec{Packages: map[string]PackageBoundary{
+		"cmd/cli": {Owner: "platform", AllowedImports: []string{}},
+	}}
+
+	violations, err := spec.ValidateImports("cmd/cli", []string{"pkg/tui"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected one violation, got %d", len(violations))
+	}
+	if violations[0].ImportPath != "pkg/tui" {
+		t.Fatalf("expected offending import pkg/tui, got %s", violations[0].ImportPath)
+	}
+}
