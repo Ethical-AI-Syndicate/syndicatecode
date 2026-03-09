@@ -14,7 +14,6 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
-	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/policy"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/sandbox"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
@@ -72,10 +71,10 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	}
 
 	if cfg.ProviderPolicyPath != "" {
-		if _, err := policy.LoadProviderPolicy(cfg.ProviderPolicyPath); err != nil {
+		if _, err := LoadProviderPolicy(cfg.ProviderPolicyPath); err != nil {
 			return nil, fmt.Errorf("failed to load provider policy: %w", err)
 		}
-	} else if err := policy.DefaultProviderPolicy().Validate(); err != nil {
+	} else if err := DefaultProviderPolicy().Validate(); err != nil {
 		return nil, fmt.Errorf("invalid default provider policy: %w", err)
 	}
 
