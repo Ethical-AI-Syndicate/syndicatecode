@@ -1,15 +1,78 @@
 {
   "bead_id": "l3d.6.2",
   "bead_issue_id": "SyndicateCode-l3d.6.2",
-  "bead_issue_status": "in_progress",
-  "generated_at_utc": "2026-03-09T19:01:47Z",
+  "bead_issue_status": "open",
+  "generated_at_utc": "2026-03-09T19:57:47Z",
   "generator_version": "v2",
-  "head_sha": "d3b0b26d0c80706f457fae5913a63887861660cd",
+  "head_sha": "bdb61e66f2edbf9924d738f4be70cbe218160e08",
   "range": "origin/master..HEAD",
-  "commits": [],
-  "changed_files": [],
-  "changed_go_files": [],
-  "changed_test_files": [],
+  "commits": [
+    {
+      "sha": "7607091343f69100b73f9eee496c1401975e1d62",
+      "subject": "fix(security): address gosec findings in envelope and validator [l3d.2.3] [l3d.6.2]",
+      "beads": [
+        "l3d.2.3",
+        "l3d.6.2"
+      ]
+    },
+    {
+      "sha": "1482338641d53ecf9e21c31502727bfc567295f7",
+      "subject": "bd:l3d.6.2 implement pre-apply validation and conflict detection",
+      "beads": [
+        "l3d.6.2"
+      ]
+    }
+  ],
+  "changed_files": [
+    "bead-evidence/l3d.1.json",
+    "bead-evidence/l3d.10.4.json",
+    "bead-evidence/l3d.2.1.json",
+    "bead-evidence/l3d.2.3.json",
+    "bead-evidence/l3d.6.1.json",
+    "bead-evidence/l3d.6.2.json",
+    "internal/context/context.go",
+    "internal/context/context_test.go",
+    "internal/controlplane/error_envelope.go",
+    "internal/controlplane/error_envelope_test.go",
+    "internal/controlplane/server.go",
+    "internal/controlplane/server_test.go",
+    "internal/controlplane/startup_restore.go",
+    "internal/controlplane/startup_restore_test.go",
+    "internal/controlplane/turns_api_test.go",
+    "internal/patch/proposal.go",
+    "internal/patch/proposal_test.go",
+    "internal/patch/validator.go",
+    "internal/patch/validator_test.go",
+    "pkg/tui/app.go",
+    "pkg/tui/app_test.go",
+    "pkg/tui/client.go",
+    "tools/beads/main.go",
+    "tools/beads/main_test.go",
+    "tools/verify/main.go"
+  ],
+  "changed_go_files": [
+    "internal/context/context.go",
+    "internal/controlplane/error_envelope.go",
+    "internal/controlplane/server.go",
+    "internal/controlplane/startup_restore.go",
+    "internal/patch/proposal.go",
+    "internal/patch/validator.go",
+    "pkg/tui/app.go",
+    "pkg/tui/client.go",
+    "tools/beads/main.go",
+    "tools/verify/main.go"
+  ],
+  "changed_test_files": [
+    "internal/context/context_test.go",
+    "internal/controlplane/error_envelope_test.go",
+    "internal/controlplane/server_test.go",
+    "internal/controlplane/startup_restore_test.go",
+    "internal/controlplane/turns_api_test.go",
+    "internal/patch/proposal_test.go",
+    "internal/patch/validator_test.go",
+    "pkg/tui/app_test.go",
+    "tools/beads/main_test.go"
+  ],
   "linked_tests": [
     {
       "file": "internal/patch/validator_test.go",
@@ -37,11 +100,8 @@
     "test": "pass"
   },
   "summary": {
-    "credible_for_closure": false,
-    "reasons": [
-      "no commits linked to bead in configured range",
-      "no changed files captured for bead range"
-    ]
+    "credible_for_closure": true,
+    "reasons": null
   },
   "acceptance_criteria_evidence": [
     "PR acceptance checklist required by template",

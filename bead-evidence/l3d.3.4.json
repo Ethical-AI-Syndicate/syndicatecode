@@ -1,20 +1,12 @@
 {
-  "bead_id": "l3d.2.1",
-  "bead_issue_id": "SyndicateCode-l3d.2.1",
+  "bead_id": "l3d.3.4",
+  "bead_issue_id": "SyndicateCode-l3d.3.4",
   "bead_issue_status": "open",
-  "generated_at_utc": "2026-03-09T19:57:45Z",
+  "generated_at_utc": "2026-03-09T19:57:46Z",
   "generator_version": "v2",
   "head_sha": "bdb61e66f2edbf9924d738f4be70cbe218160e08",
   "range": "origin/master..HEAD",
-  "commits": [
-    {
-      "sha": "8b6cfc876c455bfef0f494700703d104df9d2227",
-      "subject": "bd:l3d.2.1 implement session-scoped turns API contract",
-      "beads": [
-        "l3d.2.1"
-      ]
-    }
-  ],
+  "commits": [],
   "changed_files": [
     "bead-evidence/l3d.1.json",
     "bead-evidence/l3d.10.4.json",
@@ -65,32 +57,7 @@
     "pkg/tui/app_test.go",
     "tools/beads/main_test.go"
   ],
-  "linked_tests": [
-    {
-      "file": "internal/controlplane/turns_api_test.go",
-      "line": 18,
-      "test_name": "TestCreateTurn_SessionScoped_Bead_l3d_2_1",
-      "beads": [
-        "l3d.2.1"
-      ]
-    },
-    {
-      "file": "internal/controlplane/turns_api_test.go",
-      "line": 97,
-      "test_name": "TestListTurns_SessionScoped_Bead_l3d_2_1",
-      "beads": [
-        "l3d.2.1"
-      ]
-    },
-    {
-      "file": "internal/controlplane/turns_api_test.go",
-      "line": 145,
-      "test_name": "TestGetTurnContext_SessionScoped_Bead_l3d_2_1",
-      "beads": [
-        "l3d.2.1"
-      ]
-    }
-  ],
+  "linked_tests": [],
   "ci_phases": {
     "bead-verify": "pass",
     "build": "pass",
@@ -100,8 +67,11 @@
     "test": "pass"
   },
   "summary": {
-    "credible_for_closure": true,
-    "reasons": null
+    "credible_for_closure": false,
+    "reasons": [
+      "no commits linked to bead in configured range",
+      "no bead-tagged tests found for bead"
+    ]
   },
   "acceptance_criteria_evidence": [
     "PR acceptance checklist required by template",

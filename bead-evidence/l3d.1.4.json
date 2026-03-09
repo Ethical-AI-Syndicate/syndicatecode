@@ -1,6 +1,6 @@
 {
-  "bead_id": "l3d.2.1",
-  "bead_issue_id": "SyndicateCode-l3d.2.1",
+  "bead_id": "l3d.1.4",
+  "bead_issue_id": "SyndicateCode-l3d.1.4",
   "bead_issue_status": "open",
   "generated_at_utc": "2026-03-09T19:57:45Z",
   "generator_version": "v2",
@@ -8,10 +8,24 @@
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "8b6cfc876c455bfef0f494700703d104df9d2227",
-      "subject": "bd:l3d.2.1 implement session-scoped turns API contract",
+      "sha": "0033c7533114991f5f1d67a3f3d01a805cfe9a9b",
+      "subject": "bd:l3d.1.4 satisfy bead suffix test linkage [l3d.1.4]",
       "beads": [
-        "l3d.2.1"
+        "l3d.1.4"
+      ]
+    },
+    {
+      "sha": "09c8e4c4ef0debf9a040d9829986a02e7f18a0d3",
+      "subject": "bd:l3d.1.4 align bead-tagged tests with verifier requirements [l3d.1.4]",
+      "beads": [
+        "l3d.1.4"
+      ]
+    },
+    {
+      "sha": "9315264933aed17113a05b2a894c2caac5654b1c",
+      "subject": "bd:l3d.1.4 enforce single active mutable turn gate [l3d.1.4]",
+      "beads": [
+        "l3d.1.4"
       ]
     }
   ],
@@ -67,27 +81,27 @@
   ],
   "linked_tests": [
     {
-      "file": "internal/controlplane/turns_api_test.go",
-      "line": 18,
-      "test_name": "TestCreateTurn_SessionScoped_Bead_l3d_2_1",
+      "file": "internal/context/context_test.go",
+      "line": 280,
+      "test_name": "TestTurnManager_RejectsSecondActiveMutableTurn_Bead_l3d_1_4",
       "beads": [
-        "l3d.2.1"
+        "l3d.1.4"
       ]
     },
     {
-      "file": "internal/controlplane/turns_api_test.go",
-      "line": 97,
-      "test_name": "TestListTurns_SessionScoped_Bead_l3d_2_1",
+      "file": "internal/context/context_test.go",
+      "line": 326,
+      "test_name": "TestTurnManager_AllowsNewTurnAfterTerminalTransition_Bead_l3d_1_4",
       "beads": [
-        "l3d.2.1"
+        "l3d.1.4"
       ]
     },
     {
-      "file": "internal/controlplane/turns_api_test.go",
-      "line": 145,
-      "test_name": "TestGetTurnContext_SessionScoped_Bead_l3d_2_1",
+      "file": "internal/controlplane/server_test.go",
+      "line": 16,
+      "test_name": "TestCreateTurn_RejectsConcurrentMutableTurnsAndPreservesReadOnlyAccess_Bead_l3d_1_4",
       "beads": [
-        "l3d.2.1"
+        "l3d.1.4"
       ]
     }
   ],
