@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 )
 
 var allowedTrustTiers = []string{"tier0", "tier1", "tier2", "tier3"}
@@ -40,14 +42,20 @@ func DefaultProviderPolicy() ProviderPolicy {
 }
 
 func LoadProviderPolicy(path string) (ProviderPolicy, error) {
-	content, err := os.ReadFile(path)
+	validatedPath, err := validateProviderPolicyPath(path)
 	if err != nil {
-		return ProviderPolicy{}, fmt.Errorf("failed to read provider policy file %s: %w", path, err)
+		return ProviderPolicy{}, err
+	}
+
+	// #nosec G304 -- validatedPath is normalized and extension-constrained by validateProviderPolicyPath
+	content, err := os.ReadFile(validatedPath)
+	if err != nil {
+		return ProviderPolicy{}, fmt.Errorf("failed to read provider policy file %s: %w", validatedPath, err)
 	}
 
 	var cfg ProviderPolicy
 	if err := json.Unmarshal(content, &cfg); err != nil {
-		return ProviderPolicy{}, fmt.Errorf("failed to decode provider policy file %s: %w", path, err)
+		return ProviderPolicy{}, fmt.Errorf("failed to decode provider policy file %s: %w", validatedPath, err)
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -55,6 +63,24 @@ func LoadProviderPolicy(path string) (ProviderPolicy, error) {
 	}
 
 	return cfg.normalized(), nil
+}
+
+func validateProviderPolicyPath(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("provider policy path is required")
+	}
+
+	cleaned := filepath.Clean(trimmed)
+	if filepath.Ext(cleaned) != ".json" {
+		return "", fmt.Errorf("provider policy file must use .json extension")
+	}
+
+	if cleaned == "." || cleaned == string(filepath.Separator) {
+		return "", fmt.Errorf("provider policy path must reference a file")
+	}
+
+	return cleaned, nil
 }
 
 func (p ProviderPolicy) Validate() error {

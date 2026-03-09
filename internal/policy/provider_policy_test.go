@@ -66,3 +66,30 @@ func TestLoadProviderPolicyValidConfigLoadsDeterministically(t *testing.T) {
 		t.Fatalf("expected deterministic policy loading")
 	}
 }
+
+func TestLoadProviderPolicyRejectsNonJSONPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "provider-policy.txt")
+	valid := `{
+		"providers": [
+			{
+				"name": "local-llm",
+				"trust_tiers": ["tier1"],
+				"sensitivity": ["B"],
+				"tasks": ["analysis"],
+				"retention_class": "ephemeral",
+				"fallback_eligible": false
+			}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
+		t.Fatalf("failed to write valid policy file: %v", err)
+	}
+
+	_, err := LoadProviderPolicy(path)
+	if err == nil {
+		t.Fatalf("expected non-json policy path to fail")
+	}
+	if !strings.Contains(err.Error(), "must use .json") {
+		t.Fatalf("expected extension validation error, got %v", err)
+	}
+}
