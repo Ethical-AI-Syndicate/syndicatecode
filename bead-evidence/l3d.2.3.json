@@ -1,0 +1,51 @@
+{
+  "bead_id": "l3d.2.3",
+  "bead_issue_id": "SyndicateCode-l3d.2.3",
+  "bead_issue_status": "in_progress",
+  "generated_at_utc": "2026-03-09T19:31:54Z",
+  "generator_version": "v2",
+  "head_sha": "ab8b219e4ca8e3e506cdac2aa23c55a49ad63e00",
+  "range": "origin/master..HEAD",
+  "commits": [],
+  "changed_files": [],
+  "changed_go_files": [],
+  "changed_test_files": [],
+  "linked_tests": [
+    {
+      "file": "internal/controlplane/error_envelope_test.go",
+      "line": 17,
+      "test_name": "TestErrorEnvelope_Bead_l3d_2_3",
+      "beads": [
+        "l3d.2.3"
+      ]
+    },
+    {
+      "file": "internal/controlplane/error_envelope_test.go",
+      "line": 87,
+      "test_name": "TestWriteError_DoesNotExposeInternalDetails_Bead_l3d_2_3",
+      "beads": [
+        "l3d.2.3"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": false,
+    "reasons": [
+      "no commits linked to bead in configured range",
+      "no changed files captured for bead range"
+    ]
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
