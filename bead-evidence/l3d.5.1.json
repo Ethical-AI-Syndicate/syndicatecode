@@ -1,11 +1,25 @@
 {
   "bead_id": "l3d.5.1",
   "bead_issue_id": "bead-l3d-5-1-provider-policy-l3d.5.1",
-  "generated_at_utc": "2026-03-09T13:42:17Z",
+  "generated_at_utc": "2026-03-09T19:43:05Z",
   "generator_version": "v2",
-  "head_sha": "8295b2957871e698fcc7546cd0dc0f110f00a055",
+  "head_sha": "89951049fd7e41f25d10bbf2074a117e7cbf638d",
   "range": "origin/master..HEAD",
   "commits": [
+    {
+      "sha": "c0fb078c5798cde2f7117988538d8a909724507d",
+      "subject": "chore(policy): merge master updates [l3d.5.1]",
+      "beads": [
+        "l3d.5.1"
+      ]
+    },
+    {
+      "sha": "af5ca6b3654cc5ba5b52727c7f8d4569695e0d35",
+      "subject": "chore(evidence): record local verification artifact [l3d.5.1]",
+      "beads": [
+        "l3d.5.1"
+      ]
+    },
     {
       "sha": "8295b2957871e698fcc7546cd0dc0f110f00a055",
       "subject": "refactor(controlplane): keep provider policy startup validation within package [l3d.5.1]",
@@ -36,24 +50,23 @@
     }
   ],
   "changed_files": [
+    "bead-evidence/l3d.5.1.json",
     "internal/controlplane/provider_policy.go",
     "internal/controlplane/provider_policy_test.go",
-    "internal/controlplane/server.go",
-    "internal/controlplane/server_policy_test.go",
     "internal/controlplane/server_test.go",
-    "internal/policy/provider_policy.go",
-    "internal/policy/provider_policy_test.go"
+    "tools/beads/main.go",
+    "tools/beads/main_test.go",
+    "tools/verify/main.go"
   ],
   "changed_go_files": [
     "internal/controlplane/provider_policy.go",
-    "internal/controlplane/server.go",
-    "internal/policy/provider_policy.go"
+    "tools/beads/main.go",
+    "tools/verify/main.go"
   ],
   "changed_test_files": [
     "internal/controlplane/provider_policy_test.go",
-    "internal/controlplane/server_policy_test.go",
     "internal/controlplane/server_test.go",
-    "internal/policy/provider_policy_test.go"
+    "tools/beads/main_test.go"
   ],
   "linked_tests": [
     {
@@ -86,14 +99,12 @@
     "build": "pass",
     "format": "pass",
     "lint": "pass",
-    "security": "fail",
+    "security": "pass",
     "test": "pass"
   },
   "summary": {
-    "credible_for_closure": false,
-    "reasons": [
-      "CI phase security status=fail"
-    ]
+    "credible_for_closure": true,
+    "reasons": null
   },
   "acceptance_criteria_evidence": [
     "PR acceptance checklist required by template",
