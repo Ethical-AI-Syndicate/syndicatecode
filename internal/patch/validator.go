@@ -117,6 +117,7 @@ func hashContent(content string) string {
 }
 
 func HashFile(path string) (string, error) {
+	// #nosec G304 -- path is provided by validated proposal operations and read only for deterministic hashing.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err

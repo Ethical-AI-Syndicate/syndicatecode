@@ -49,7 +49,5 @@ func WriteError(w http.ResponseWriter, status int, err error) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(envelope); err != nil {
-		w.Write([]byte(`{"type":"error","reason":"failed to encode error"}`)) //nolint:errcheck
-	}
+	_ = json.NewEncoder(w).Encode(envelope)
 }
