@@ -88,3 +88,68 @@ func TestPreEditCheckAllowsSafeState(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
+
+func TestPreEditCheckRejectsProtectedBranchForHighTrustTier(t *testing.T) {
+	t.Parallel()
+
+	checker := NewPreEditChecker(&fakeStateInspector{state: RepoState{Branch: "master"}})
+	err := checker.Validate(context.Background(), PreEditRequest{
+		RepoPath:           "/repo",
+		TrustTier:          "tier2",
+		ProtectedBranches:  []string{"master", "main"},
+		RequireClean:       false,
+		RequireWorktreeFor: []string{"tier2", "tier3"},
+	})
+	if !errors.Is(err, ErrUnsafeGitState) {
+		t.Fatalf("expected %v, got %v", ErrUnsafeGitState, err)
+	}
+}
+
+func TestPreEditCheckRejectsNonTaskBranchForTier3(t *testing.T) {
+	t.Parallel()
+
+	checker := NewPreEditChecker(&fakeStateInspector{state: RepoState{Branch: "feature/misc", IsWorktree: true}})
+	err := checker.Validate(context.Background(), PreEditRequest{
+		RepoPath:             "/repo",
+		TrustTier:            "tier3",
+		TaskBranchPrefixes:   []string{"task/", "agent/"},
+		RequireTaskBranchFor: []string{"tier3"},
+		RequireWorktreeFor:   []string{"tier3"},
+	})
+	if !errors.Is(err, ErrUnsafeGitState) {
+		t.Fatalf("expected %v, got %v", ErrUnsafeGitState, err)
+	}
+}
+
+func TestPreEditCheckRejectsNonWorktreeForTier3(t *testing.T) {
+	t.Parallel()
+
+	checker := NewPreEditChecker(&fakeStateInspector{state: RepoState{Branch: "task/hardening", IsWorktree: false}})
+	err := checker.Validate(context.Background(), PreEditRequest{
+		RepoPath:             "/repo",
+		TrustTier:            "tier3",
+		TaskBranchPrefixes:   []string{"task/"},
+		RequireTaskBranchFor: []string{"tier3"},
+		RequireWorktreeFor:   []string{"tier3"},
+	})
+	if !errors.Is(err, ErrUnsafeGitState) {
+		t.Fatalf("expected %v, got %v", ErrUnsafeGitState, err)
+	}
+}
+
+func TestPreEditCheckAllowsTier3InTaskBranchWorktree(t *testing.T) {
+	t.Parallel()
+
+	checker := NewPreEditChecker(&fakeStateInspector{state: RepoState{Branch: "task/hardening", IsWorktree: true}})
+	err := checker.Validate(context.Background(), PreEditRequest{
+		RepoPath:             "/repo",
+		TrustTier:            "tier3",
+		TaskBranchPrefixes:   []string{"task/"},
+		RequireTaskBranchFor: []string{"tier3"},
+		RequireWorktreeFor:   []string{"tier3"},
+		ProtectedBranches:    []string{"master", "main"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
