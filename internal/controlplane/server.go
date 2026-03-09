@@ -14,6 +14,7 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/policy"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/sandbox"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
@@ -71,10 +72,10 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	}
 
 	if cfg.ProviderPolicyPath != "" {
-		if _, err := LoadProviderPolicy(cfg.ProviderPolicyPath); err != nil {
+		if _, err := policy.LoadProviderPolicy(cfg.ProviderPolicyPath); err != nil {
 			return nil, fmt.Errorf("failed to load provider policy: %w", err)
 		}
-	} else if err := DefaultProviderPolicy().Validate(); err != nil {
+	} else if err := policy.DefaultProviderPolicy().Validate(); err != nil {
 		return nil, fmt.Errorf("invalid default provider policy: %w", err)
 	}
 
@@ -109,6 +110,10 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 		approvalMgr:  approvalMgr,
 		toolRegistry: toolRegistry,
 		toolExecutor: toolExecutor,
+	}
+
+	if err := server.restoreRuntimeState(ctx); err != nil {
+		return nil, fmt.Errorf("failed to restore runtime state: %w", err)
 	}
 
 	server.registerRoutes(mux)
@@ -522,6 +527,15 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.appendApprovalEvent(r.Context(), "approval_decided", approval.SessionID, map[string]string{
+		"approval_id": approval.ID,
+		"decision":    req.Decision,
+		"reason":      req.Reason,
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if req.Decision == "approve" {
 		result, execErr := s.toolExecutor.Execute(r.Context(), approval.Call)
 		if toolDef, ok := s.toolRegistry.Get(approval.Call.ToolName); ok {
@@ -538,6 +552,13 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 		updated, ok := s.approvalMgr.Get(approvalID)
 		if ok {
 			approval = &updated
+		}
+
+		if err := s.appendApprovalEvent(r.Context(), "approval_executed", approval.SessionID, map[string]string{
+			"approval_id": approval.ID,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -631,6 +652,10 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		approval, err := s.approvalMgr.Propose(req.SessionID, req, toolDef.SideEffect, toolDef.Limits.AllowedPaths)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.appendApprovalEvent(r.Context(), "approval_proposed", approval.SessionID, approval); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)

@@ -31,7 +31,7 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/controlplane": {
 				Owner:            "controlplane",
 				Responsibilities: []string{"request orchestration", "session and turn coordination", "policy surface integration"},
-				AllowedImports:   []string{"internal/audit", "internal/context", "internal/mcp", "internal/patch", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
+				AllowedImports:   []string{"internal/audit", "internal/context", "internal/mcp", "internal/patch", "internal/policy", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
 			},
 			"internal/session": {
 				Owner:            "state",
