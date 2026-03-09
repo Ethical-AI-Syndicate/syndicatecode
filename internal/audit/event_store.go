@@ -277,3 +277,48 @@ func (s *EventStore) scanRows(rows *sql.Rows) ([]Event, error) {
 func (s *EventStore) Close() error {
 	return s.db.Close()
 }
+
+// CleanupResult reports how many rows were deleted by a retention pass.
+type CleanupResult struct {
+	ArtifactsDeleted int
+}
+
+// CleanupExpired deletes artifacts whose expires_at is set and before threshold,
+// then appends a retention.cleanup audit event recording the counts.
+func (s *EventStore) CleanupExpired(ctx context.Context, threshold time.Time) (CleanupResult, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM artifacts WHERE expires_at IS NOT NULL AND expires_at < ?`,
+		threshold.Format(time.RFC3339),
+	)
+	if err != nil {
+		return CleanupResult{}, fmt.Errorf("delete expired artifacts: %w", err)
+	}
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return CleanupResult{}, fmt.Errorf("rows affected: %w", err)
+	}
+
+	result := CleanupResult{ArtifactsDeleted: int(deleted)}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"threshold":         threshold.Format(time.RFC3339),
+		"artifacts_deleted": result.ArtifactsDeleted,
+	})
+	if err != nil {
+		return result, fmt.Errorf("marshal retention event payload: %w", err)
+	}
+
+	event := Event{
+		ID:        fmt.Sprintf("ret-%d", threshold.UnixNano()),
+		SessionID: "system:retention",
+		Timestamp: threshold,
+		EventType: "retention.cleanup",
+		Actor:     "system",
+		Payload:   payload,
+	}
+	if appendErr := s.Append(ctx, event); appendErr != nil {
+		return result, fmt.Errorf("append retention event: %w", appendErr)
+	}
+
+	return result, nil
+}

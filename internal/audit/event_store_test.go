@@ -1,8 +1,10 @@
 package audit
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestEventStore_MigrateCreatesCoreTablesAndIndexes(t *testing.T) {
@@ -73,6 +75,118 @@ func TestEventStore_MigrateEnforcesForeignKeysAndWAL(t *testing.T) {
 	}
 	if journalMode != "wal" {
 		t.Fatalf("expected WAL journal mode, got %s", journalMode)
+	}
+}
+
+func TestEventStore_CleanupExpiredDeletesArtifactsAndEmitsEvent(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Insert an artifact that expired 1 hour ago.
+	expiredID := "artifact-expired-1"
+	_, err = store.db.ExecContext(ctx,
+		`INSERT INTO artifacts (id, kind, storage_path, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		expiredID, "blob", "/tmp/old.blob",
+		now.Add(-1*time.Hour).Format(time.RFC3339),
+		now.Add(-2*time.Hour).Format(time.RFC3339),
+	)
+	if err != nil {
+		t.Fatalf("insert expired artifact: %v", err)
+	}
+
+	// Insert an artifact that expires in the future.
+	futureID := "artifact-future-1"
+	_, err = store.db.ExecContext(ctx,
+		`INSERT INTO artifacts (id, kind, storage_path, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		futureID, "blob", "/tmp/new.blob",
+		now.Add(1*time.Hour).Format(time.RFC3339),
+		now.Add(-1*time.Hour).Format(time.RFC3339),
+	)
+	if err != nil {
+		t.Fatalf("insert future artifact: %v", err)
+	}
+
+	result, err := store.CleanupExpired(ctx, now)
+	if err != nil {
+		t.Fatalf("CleanupExpired: %v", err)
+	}
+
+	if result.ArtifactsDeleted != 1 {
+		t.Errorf("expected 1 artifact deleted, got %d", result.ArtifactsDeleted)
+	}
+
+	// Expired artifact must be gone.
+	var count int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM artifacts WHERE id = ?`, expiredID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 0 {
+		t.Error("expired artifact still present after cleanup")
+	}
+
+	// Future artifact must remain.
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM artifacts WHERE id = ?`, futureID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 1 {
+		t.Error("future artifact was incorrectly deleted")
+	}
+
+	// A retention.cleanup event must have been emitted.
+	events, err := store.QueryAll(ctx)
+	if err != nil {
+		t.Fatalf("QueryAll: %v", err)
+	}
+	var found bool
+	for _, e := range events {
+		if e.EventType == "retention.cleanup" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected retention.cleanup event, none found")
+	}
+}
+
+func TestEventStore_CleanupExpiredIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	result, err := store.CleanupExpired(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("first CleanupExpired: %v", err)
+	}
+	if result.ArtifactsDeleted != 0 {
+		t.Errorf("expected 0 on empty store, got %d", result.ArtifactsDeleted)
+	}
+
+	result2, err := store.CleanupExpired(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("second CleanupExpired: %v", err)
+	}
+	if result2.ArtifactsDeleted != 0 {
+		t.Errorf("expected 0 on second call, got %d", result2.ArtifactsDeleted)
 	}
 }
 
