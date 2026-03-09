@@ -49,6 +49,9 @@ bead-verify:
     - |
       if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
         RANGE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-origin/master}..${CI_COMMIT_SHA}"
+      elif [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        echo "Skipping bead-verify for direct push to default branch"
+        exit 0
       else
         RANGE="origin/master..${CI_COMMIT_SHA}"
       fi
@@ -79,6 +82,9 @@ bead-evidence:
     - |
       if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
         RANGE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-origin/master}..${CI_COMMIT_SHA}"
+      elif [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        echo "Skipping bead-evidence for direct push to default branch"
+        exit 0
       else
         RANGE="origin/master..${CI_COMMIT_SHA}"
       fi
