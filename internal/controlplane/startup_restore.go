@@ -78,7 +78,7 @@ func (s *Server) restoreRuntimeState(ctx context.Context) error {
 	for _, approval := range approvals {
 		if approval.State == ApprovalStateApproved {
 			approval.State = ApprovalStateCancelled
-			approval.DecisionReason = "cancelled during startup recovery before execution"
+			approval.DecisionReason = "operator re-entry required after startup recovery"
 			approval.UpdatedAt = now
 		}
 		if approval.State == ApprovalStatePending && now.After(approval.ExpiresAt) {
