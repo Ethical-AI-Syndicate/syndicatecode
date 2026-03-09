@@ -7,14 +7,15 @@ import (
 
 	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/state"
 )
 
-type Status string
+type Status = state.SessionState
 
 const (
-	StatusActive     Status = "active"
-	StatusCompleted  Status = "completed"
-	StatusTerminated Status = "terminated"
+	StatusActive     Status = state.SessionStateActive
+	StatusCompleted  Status = state.SessionStateCompleted
+	StatusTerminated Status = state.SessionStateTerminated
 )
 
 type Session struct {

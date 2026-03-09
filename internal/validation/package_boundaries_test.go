@@ -10,6 +10,7 @@ func TestDefaultPackageBoundarySpecIncludesCorePackages(t *testing.T) {
 		"internal/controlplane",
 		"internal/context",
 		"internal/session",
+		"internal/state",
 		"internal/audit",
 		"internal/tools",
 		"internal/sandbox",

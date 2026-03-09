@@ -26,17 +26,22 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/controlplane": {
 				Owner:            "controlplane",
 				Responsibilities: []string{"request orchestration", "session and turn coordination", "policy surface integration"},
-				AllowedImports:   []string{"internal/session", "internal/context", "internal/audit", "internal/tools", "internal/sandbox"},
+				AllowedImports:   []string{"internal/session", "internal/context", "internal/audit", "internal/tools", "internal/sandbox", "internal/state"},
 			},
 			"internal/session": {
 				Owner:            "state",
 				Responsibilities: []string{"session lifecycle"},
-				AllowedImports:   []string{"internal/audit"},
+				AllowedImports:   []string{"internal/audit", "internal/state"},
 			},
 			"internal/context": {
 				Owner:            "ai-systems",
 				Responsibilities: []string{"turn lifecycle", "context assembly", "token budgeting", "retrieval profile classification"},
-				AllowedImports:   []string{"internal/audit", "internal/session"},
+				AllowedImports:   []string{"internal/audit", "internal/session", "internal/state"},
+			},
+			"internal/state": {
+				Owner:            "state",
+				Responsibilities: []string{"canonical lifecycle enums", "state transition validation"},
+				AllowedImports:   []string{},
 			},
 			"internal/audit": {
 				Owner:            "platform",
