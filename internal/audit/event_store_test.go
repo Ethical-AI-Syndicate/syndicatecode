@@ -2,6 +2,8 @@ package audit
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -245,6 +247,18 @@ func TestEventStore_StoreAndGetArtifact(t *testing.T) {
 	if got.StoragePath != artifact.StoragePath {
 		t.Errorf("StoragePath: got %q, want %q", got.StoragePath, artifact.StoragePath)
 	}
+	if got.SessionID != artifact.SessionID {
+		t.Errorf("SessionID: got %q, want %q", got.SessionID, artifact.SessionID)
+	}
+	if got.TurnID != artifact.TurnID {
+		t.Errorf("TurnID: got %q, want %q", got.TurnID, artifact.TurnID)
+	}
+	if got.Kind != artifact.Kind {
+		t.Errorf("Kind: got %q, want %q", got.Kind, artifact.Kind)
+	}
+	if !got.CreatedAt.Equal(artifact.CreatedAt) {
+		t.Errorf("CreatedAt: got %v, want %v", got.CreatedAt, artifact.CreatedAt)
+	}
 }
 
 func TestEventStore_GetArtifactNotFound(t *testing.T) {
@@ -259,6 +273,9 @@ func TestEventStore_GetArtifactNotFound(t *testing.T) {
 	_, err = store.GetArtifact(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for missing artifact, got nil")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expected sql.ErrNoRows in error chain, got: %v", err)
 	}
 }
 

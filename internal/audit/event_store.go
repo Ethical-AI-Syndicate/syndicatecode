@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -385,7 +386,7 @@ func (s *EventStore) ListArtifactsBySession(ctx context.Context, sessionID strin
 
 	var result []ArtifactRecord
 	for rows.Next() {
-		a, err := scanArtifactRow(rows)
+		a, err := scanArtifact(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -403,11 +404,16 @@ func scanArtifact(s artifactScanner) (ArtifactRecord, error) {
 	var expiresAtStr, createdAtStr string
 	if err := s.Scan(&a.ID, &a.SessionID, &a.TurnID, &a.Kind, &a.StoragePath,
 		&a.SHA256, &a.RedactionState, &expiresAtStr, &createdAtStr); err != nil {
-		return ArtifactRecord{}, fmt.Errorf("artifact not found: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ArtifactRecord{}, fmt.Errorf("artifact not found: %w", err)
+		}
+		return ArtifactRecord{}, fmt.Errorf("scan artifact: %w", err)
 	}
-	if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
-		a.CreatedAt = t
+	t, err := time.Parse(time.RFC3339, createdAtStr)
+	if err != nil {
+		return ArtifactRecord{}, fmt.Errorf("parse created_at %q: %w", createdAtStr, err)
 	}
+	a.CreatedAt = t
 	if expiresAtStr != "" {
 		if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
 			a.ExpiresAt = &t
@@ -416,20 +422,3 @@ func scanArtifact(s artifactScanner) (ArtifactRecord, error) {
 	return a, nil
 }
 
-func scanArtifactRow(rows *sql.Rows) (ArtifactRecord, error) {
-	var a ArtifactRecord
-	var expiresAtStr, createdAtStr string
-	if err := rows.Scan(&a.ID, &a.SessionID, &a.TurnID, &a.Kind, &a.StoragePath,
-		&a.SHA256, &a.RedactionState, &expiresAtStr, &createdAtStr); err != nil {
-		return ArtifactRecord{}, err
-	}
-	if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
-		a.CreatedAt = t
-	}
-	if expiresAtStr != "" {
-		if t, err := time.Parse(time.RFC3339, expiresAtStr); err == nil {
-			a.ExpiresAt = &t
-		}
-	}
-	return a, nil
-}
