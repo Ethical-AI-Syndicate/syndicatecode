@@ -1,0 +1,103 @@
+{
+  "bead_id": "l3d.5.1",
+  "bead_issue_id": "bead-l3d-5-1-provider-policy-l3d.5.1",
+  "generated_at_utc": "2026-03-09T13:42:17Z",
+  "generator_version": "v2",
+  "head_sha": "8295b2957871e698fcc7546cd0dc0f110f00a055",
+  "range": "origin/master..HEAD",
+  "commits": [
+    {
+      "sha": "8295b2957871e698fcc7546cd0dc0f110f00a055",
+      "subject": "refactor(controlplane): keep provider policy startup validation within package [l3d.5.1]",
+      "beads": [
+        "l3d.5.1"
+      ]
+    },
+    {
+      "sha": "ec2543ac6b4a2072f41aa14eb90ffc19b2f0c069",
+      "subject": "test(controlplane): add bead-linked startup validation test [l3d.5.1]",
+      "beads": [
+        "l3d.5.1"
+      ]
+    },
+    {
+      "sha": "bd8a6b6ede94cbfc7d955b46f928463dd3909458",
+      "subject": "fix(policy): validate provider policy file paths for secure loading [l3d.5.1]",
+      "beads": [
+        "l3d.5.1"
+      ]
+    },
+    {
+      "sha": "9ce65933701b6f776688470b11e6ba694bced2c5",
+      "subject": "feat(policy): add provider policy schema and startup validation [l3d.5.1]",
+      "beads": [
+        "l3d.5.1"
+      ]
+    }
+  ],
+  "changed_files": [
+    "internal/controlplane/provider_policy.go",
+    "internal/controlplane/provider_policy_test.go",
+    "internal/controlplane/server.go",
+    "internal/controlplane/server_policy_test.go",
+    "internal/controlplane/server_test.go",
+    "internal/policy/provider_policy.go",
+    "internal/policy/provider_policy_test.go"
+  ],
+  "changed_go_files": [
+    "internal/controlplane/provider_policy.go",
+    "internal/controlplane/server.go",
+    "internal/policy/provider_policy.go"
+  ],
+  "changed_test_files": [
+    "internal/controlplane/provider_policy_test.go",
+    "internal/controlplane/server_policy_test.go",
+    "internal/controlplane/server_test.go",
+    "internal/policy/provider_policy_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/controlplane/provider_policy_test.go",
+      "line": 9,
+      "test_name": "TestLoadProviderPolicyRejectsInvalidConfig_Bead_l3d_5_1",
+      "beads": [
+        "l3d.5.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/provider_policy_test.go",
+      "line": 23,
+      "test_name": "TestLoadProviderPolicyValidConfigLoadsDeterministically_Bead_l3d_5_1",
+      "beads": [
+        "l3d.5.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/server_test.go",
+      "line": 11,
+      "test_name": "TestNewServerFailsFastOnInvalidProviderPolicy_Bead_l3d_5_1",
+      "beads": [
+        "l3d.5.1"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "fail",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": false,
+    "reasons": [
+      "CI phase security status=fail"
+    ]
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
