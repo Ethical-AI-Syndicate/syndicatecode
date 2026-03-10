@@ -56,6 +56,7 @@ type Server struct {
 const redactionAuditSessionID = "system:redaction"
 const approvalAuditSessionID = "system:approval"
 const eventStreamPollInterval = 200 * time.Millisecond
+const retentionCleanupInterval = time.Minute
 
 type redactionNotice struct {
 	Path           string `json:"path"`
@@ -122,9 +123,41 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to restore runtime state: %w", err)
 	}
 
+	server.startRetentionCleanupScheduler(ctx, retentionCleanupInterval)
+
 	server.registerRoutes(mux)
 
 	return server, nil
+}
+
+func (s *Server) startRetentionCleanupScheduler(ctx context.Context, interval time.Duration) {
+	if s.eventStore == nil {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.runRetentionCleanupPass(ctx, time.Now().UTC()); err != nil {
+					log.Printf("retention cleanup failed: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func (s *Server) runRetentionCleanupPass(ctx context.Context, now time.Time) error {
+	if s.eventStore == nil {
+		return nil
+	}
+	_, err := s.eventStore.CleanupExpired(ctx, now)
+	return err
 }
 
 func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tools.Registry, *tools.Executor, error) {
