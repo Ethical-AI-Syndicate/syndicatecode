@@ -71,10 +71,21 @@ func (a *App) executeCommand(ctx context.Context, args []string) (bool, error) {
 	switch cmd {
 	case "help":
 		return false, a.printHelp()
-	case "quit", "exit":
+	case "quit", "exit", "stop":
 		return true, nil
 	case "sessions":
 		return false, a.handleSessions(ctx)
+	case "start":
+		if len(args) < 3 {
+			return false, a.writeln("usage: start <repo_path> <trust_tier>")
+		}
+		return false, a.handleNewSession(ctx, args[1], args[2])
+	case "ask":
+		if len(args) < 3 {
+			return false, a.writeln("usage: ask <session_id> <message>")
+		}
+		message := strings.TrimSpace(strings.Join(args[2:], " "))
+		return false, a.handleTurn(ctx, args[1], message)
 	case "new-session":
 		if len(args) < 3 {
 			return false, a.writeln("usage: new-session <repo_path> <trust_tier>")
@@ -118,6 +129,15 @@ func (a *App) executeCommand(ctx context.Context, args []string) (bool, error) {
 			eventType = args[2]
 		}
 		return false, a.handleReplay(ctx, args[1], eventType)
+	case "diff":
+		if len(args) < 2 {
+			return false, a.writeln("usage: diff <session_id> [event_type]")
+		}
+		eventType := ""
+		if len(args) > 2 {
+			eventType = args[2]
+		}
+		return false, a.handleReplay(ctx, args[1], eventType)
 	default:
 		return false, a.writeln("unknown command")
 	}
@@ -127,6 +147,9 @@ func (a *App) printHelp() error {
 	lines := []string{
 		"Commands:",
 		"  sessions",
+		"  start <repo_path> <trust_tier>",
+		"  ask <session_id> <message>",
+		"  diff <session_id> [event_type]",
 		"  new-session <repo_path> <trust_tier>",
 		"  turn <session_id> <message>",
 		"  approvals",
@@ -135,6 +158,7 @@ func (a *App) printHelp() error {
 		"  context <session_id> <turn_id>",
 		"  policy",
 		"  replay <session_id> [event_type]",
+		"  stop",
 		"  quit",
 	}
 	for _, line := range lines {

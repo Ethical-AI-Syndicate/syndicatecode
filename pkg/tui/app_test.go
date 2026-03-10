@@ -152,3 +152,31 @@ func TestApp_PolicyAndReplayCommands_Bead_l3d_15_4(t *testing.T) {
 		t.Fatalf("expected replay output for mcp.call, got %q", content)
 	}
 }
+
+func TestApp_PrimaryCommandSurface_Bead_l3d_15_1(t *testing.T) {
+	api := &mockAPI{
+		replayBySess: map[string][]ReplayEvent{
+			"s-new": {
+				{Timestamp: "2026-03-10T00:02:00Z", EventType: "mcp.call", Actor: "controlplane"},
+			},
+		},
+	}
+	in := strings.NewReader("start /repo tier1\nask s-new hello world\ndiff s-new mcp.call\nstop\n")
+	out := &bytes.Buffer{}
+	app := NewApp(api, in, out)
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	content := out.String()
+	if !strings.Contains(content, "created session: s-new") {
+		t.Fatalf("expected start command output, got %q", content)
+	}
+	if !strings.Contains(content, "created turn: t-1") {
+		t.Fatalf("expected ask command output, got %q", content)
+	}
+	if !strings.Contains(content, "2026-03-10T00:02:00Z mcp.call controlplane") {
+		t.Fatalf("expected diff replay output, got %q", content)
+	}
+}
