@@ -15,6 +15,8 @@ type mockAPI struct {
 	policy        PolicyDocument
 	replayBySess  map[string][]ReplayEvent
 	decisions     []decisionCall
+	newSessions   int
+	newTurns      int
 }
 
 type decisionCall struct {
@@ -28,11 +30,13 @@ func (m *mockAPI) ListSessions(ctx context.Context) ([]Session, error) {
 }
 
 func (m *mockAPI) CreateSession(ctx context.Context, req CreateSessionRequest) (*Session, error) {
+	m.newSessions++
 	s := &Session{ID: "s-new", RepoPath: req.RepoPath, TrustTier: req.TrustTier}
 	return s, nil
 }
 
 func (m *mockAPI) CreateTurn(ctx context.Context, sessionID string, req CreateTurnRequest) (*Turn, error) {
+	m.newTurns++
 	return &Turn{ID: "t-1", SessionID: sessionID, Message: req.Message}, nil
 }
 
@@ -245,5 +249,31 @@ func TestApp_ApprovalCommandsRejectExpired_Bead_l3d_15_3(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "approval apr-2 expired") {
 		t.Fatalf("expected expiry validation error, got %q", out.String())
+	}
+}
+
+func TestApp_ReplayModeIsReadOnly_Bead_l3d_12_4(t *testing.T) {
+	api := &mockAPI{
+		replayBySess: map[string][]ReplayEvent{
+			"s-1": {
+				{Timestamp: "2026-03-10T00:00:00Z", EventType: "session_started", Actor: "system"},
+				{Timestamp: "2026-03-10T00:01:00Z", EventType: "turn_completed", Actor: "system"},
+			},
+		},
+	}
+	in := strings.NewReader("replay s-1\nquit\n")
+	out := &bytes.Buffer{}
+	app := NewApp(api, in, out)
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	if api.newSessions != 0 || api.newTurns != 0 || len(api.decisions) != 0 {
+		t.Fatalf("replay must be read-only; mutations observed sessions=%d turns=%d decisions=%d", api.newSessions, api.newTurns, len(api.decisions))
+	}
+	content := out.String()
+	if !strings.Contains(content, "2026-03-10T00:00:00Z session_started system") || !strings.Contains(content, "2026-03-10T00:01:00Z turn_completed system") {
+		t.Fatalf("expected ordered replay output, got %q", content)
 	}
 }
