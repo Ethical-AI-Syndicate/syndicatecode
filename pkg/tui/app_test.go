@@ -11,6 +11,8 @@ type mockAPI struct {
 	sessions      []Session
 	approvals     []Approval
 	contextByTurn map[string][]ContextFragment
+	policy        PolicyDocument
+	replayBySess  map[string][]ReplayEvent
 	decisions     []decisionCall
 }
 
@@ -45,6 +47,24 @@ func (m *mockAPI) DecideApproval(ctx context.Context, approvalID string, req Dec
 func (m *mockAPI) GetTurnContext(ctx context.Context, sessionID, turnID string) ([]ContextFragment, error) {
 	key := sessionID + ":" + turnID
 	return m.contextByTurn[key], nil
+}
+
+func (m *mockAPI) GetPolicy(ctx context.Context) (PolicyDocument, error) {
+	return m.policy, nil
+}
+
+func (m *mockAPI) ListSessionEvents(ctx context.Context, sessionID, eventType string) ([]ReplayEvent, error) {
+	events := m.replayBySess[sessionID]
+	if eventType == "" {
+		return events, nil
+	}
+	filtered := make([]ReplayEvent, 0, len(events))
+	for _, ev := range events {
+		if ev.EventType == eventType {
+			filtered = append(filtered, ev)
+		}
+	}
+	return filtered, nil
 }
 
 func TestApp_HelpAndQuit(t *testing.T) {
@@ -101,5 +121,34 @@ func TestApp_ContextCommand(t *testing.T) {
 
 	if !strings.Contains(out.String(), "main.go") {
 		t.Fatalf("expected context output, got %q", out.String())
+	}
+}
+
+func TestApp_PolicyAndReplayCommands_Bead_l3d_15_4(t *testing.T) {
+	api := &mockAPI{
+		policy: PolicyDocument{
+			"version": "1.0.0",
+		},
+		replayBySess: map[string][]ReplayEvent{
+			"s-1": {
+				{Timestamp: "2026-03-10T00:00:00Z", EventType: "session_started", Actor: "system"},
+				{Timestamp: "2026-03-10T00:01:00Z", EventType: "mcp.call", Actor: "controlplane"},
+			},
+		},
+	}
+	in := strings.NewReader("policy\nreplay s-1 mcp.call\nquit\n")
+	out := &bytes.Buffer{}
+	app := NewApp(api, in, out)
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	content := out.String()
+	if !strings.Contains(content, `{"version":"1.0.0"}`) {
+		t.Fatalf("expected policy json output, got %q", content)
+	}
+	if !strings.Contains(content, "2026-03-10T00:01:00Z mcp.call controlplane") {
+		t.Fatalf("expected replay output for mcp.call, got %q", content)
 	}
 }

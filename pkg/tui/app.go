@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -15,6 +16,8 @@ type API interface {
 	ListApprovals(ctx context.Context) ([]Approval, error)
 	DecideApproval(ctx context.Context, approvalID string, req DecideApprovalRequest) (*Approval, error)
 	GetTurnContext(ctx context.Context, sessionID, turnID string) ([]ContextFragment, error)
+	GetPolicy(ctx context.Context) (PolicyDocument, error)
+	ListSessionEvents(ctx context.Context, sessionID, eventType string) ([]ReplayEvent, error)
 }
 
 type App struct {
@@ -104,6 +107,17 @@ func (a *App) executeCommand(ctx context.Context, args []string) (bool, error) {
 			return false, a.writeln("usage: context <session_id> <turn_id>")
 		}
 		return false, a.handleContext(ctx, args[1], args[2])
+	case "policy":
+		return false, a.handlePolicy(ctx)
+	case "replay":
+		if len(args) < 2 {
+			return false, a.writeln("usage: replay <session_id> [event_type]")
+		}
+		eventType := ""
+		if len(args) > 2 {
+			eventType = args[2]
+		}
+		return false, a.handleReplay(ctx, args[1], eventType)
 	default:
 		return false, a.writeln("unknown command")
 	}
@@ -118,7 +132,9 @@ func (a *App) printHelp() error {
 		"  approvals",
 		"  approve <approval_id>",
 		"  deny <approval_id> [reason]",
-		"  context <turn_id>",
+		"  context <session_id> <turn_id>",
+		"  policy",
+		"  replay <session_id> [event_type]",
 		"  quit",
 	}
 	for _, line := range lines {
@@ -186,6 +202,31 @@ func (a *App) handleContext(ctx context.Context, sessionID, turnID string) error
 	}
 	for _, f := range fragments {
 		if err := a.writef("%s %s tokens=%d truncated=%t\n", f.SourceType, f.SourceRef, f.TokenCount, f.Truncated); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) handlePolicy(ctx context.Context) error {
+	policy, err := a.api.GetPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return err
+	}
+	return a.writef("%s\n", string(data))
+}
+
+func (a *App) handleReplay(ctx context.Context, sessionID, eventType string) error {
+	events, err := a.api.ListSessionEvents(ctx, sessionID, eventType)
+	if err != nil {
+		return err
+	}
+	for _, ev := range events {
+		if err := a.writef("%s %s %s\n", ev.Timestamp, ev.EventType, ev.Actor); err != nil {
 			return err
 		}
 	}
