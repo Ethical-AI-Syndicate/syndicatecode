@@ -823,9 +823,8 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 	if requiresApproval(toolDef) {
 		// Build execution context for the approval record.
 		var execCtxBytes json.RawMessage
-		if execCtxMap, buildErr := buildExecutionContext(req, toolDef); buildErr == nil {
-			execCtxBytes, _ = json.Marshal(execCtxMap)
-		}
+		execCtxMap := buildExecutionContext(req, toolDef)
+		execCtxBytes, _ = json.Marshal(execCtxMap)
 		approval, err := s.approvalMgr.Propose(req.SessionID, req, toolDef.SideEffect, toolDef.Limits.AllowedPaths, execCtxBytes)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1179,7 +1178,7 @@ func hasMaterialImpact(notices []redactionNotice) bool {
 	return false
 }
 
-func buildExecutionContext(req tools.ExecuteRequest, def tools.ToolDefinition) (map[string]interface{}, error) {
+func buildExecutionContext(req tools.ExecuteRequest, def tools.ToolDefinition) map[string]interface{} {
 	return map[string]interface{}{
 		"tool_name":        def.Name,
 		"side_effect":      string(def.SideEffect),
@@ -1189,7 +1188,7 @@ func buildExecutionContext(req tools.ExecuteRequest, def tools.ToolDefinition) (
 		"max_output_bytes": def.Limits.MaxOutputBytes,
 		"working_dir":      def.Limits.WorkingDir,
 		"session_id":       req.SessionID,
-	}, nil
+	}
 }
 
 func (s *Server) ListenAndServe() error {

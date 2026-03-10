@@ -421,4 +421,3 @@ func scanArtifact(s artifactScanner) (ArtifactRecord, error) {
 	}
 	return a, nil
 }
-

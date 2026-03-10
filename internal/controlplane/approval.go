@@ -32,18 +32,18 @@ var (
 )
 
 type Approval struct {
-	ID             string           `json:"approval_id"`
-	SessionID      string           `json:"session_id,omitempty"`
-	ToolName       string           `json:"tool_name"`
-	ArgumentsHash  string           `json:"arguments_hash"`
-	SideEffect     tools.SideEffect `json:"side_effect"`
-	AffectedPaths  []string         `json:"paths,omitempty"`
-	State          ApprovalState    `json:"state"`
-	DecisionReason string           `json:"decision_reason,omitempty"`
-	CreatedAt      time.Time        `json:"created_at"`
-	UpdatedAt      time.Time        `json:"updated_at"`
-	ExpiresAt      time.Time        `json:"expires_at"`
-	Call            tools.ToolCall   `json:"call"`
+	ID               string           `json:"approval_id"`
+	SessionID        string           `json:"session_id,omitempty"`
+	ToolName         string           `json:"tool_name"`
+	ArgumentsHash    string           `json:"arguments_hash"`
+	SideEffect       tools.SideEffect `json:"side_effect"`
+	AffectedPaths    []string         `json:"paths,omitempty"`
+	State            ApprovalState    `json:"state"`
+	DecisionReason   string           `json:"decision_reason,omitempty"`
+	CreatedAt        time.Time        `json:"created_at"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+	ExpiresAt        time.Time        `json:"expires_at"`
+	Call             tools.ToolCall   `json:"call"`
 	ExecutionContext json.RawMessage  `json:"execution_context,omitempty"`
 }
 
@@ -107,17 +107,17 @@ func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEff
 
 	now := time.Now().UTC()
 	approval := &Approval{
-		ID:              fmt.Sprintf("apr-%d", now.UnixNano()),
-		SessionID:       sessionID,
-		ToolName:        call.ToolName,
-		ArgumentsHash:   hash,
-		SideEffect:      sideEffect,
-		AffectedPaths:   append([]string(nil), paths...),
-		State:           ApprovalStatePending,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-		ExpiresAt:       now.Add(m.expiry),
-		Call:            call,
+		ID:               fmt.Sprintf("apr-%d", now.UnixNano()),
+		SessionID:        sessionID,
+		ToolName:         call.ToolName,
+		ArgumentsHash:    hash,
+		SideEffect:       sideEffect,
+		AffectedPaths:    append([]string(nil), paths...),
+		State:            ApprovalStatePending,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		ExpiresAt:        now.Add(m.expiry),
+		Call:             call,
 		ExecutionContext: execCtx,
 	}
 

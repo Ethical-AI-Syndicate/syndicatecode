@@ -101,8 +101,7 @@ bead-evidence:
           echo "Bead $bead not found in bd - skipping"
           continue
         fi
-        STATUS=$(echo "$BEAD_STATUS" | jq -r '.[0].status // "unknown"' 2>/dev/null)
-        if [ "$STATUS" = "closed" ]; then
+        if printf '%s' "$BEAD_STATUS" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"(closed|done)"'; then
           echo "Bead $bead is already closed - skipping closure check"
           continue
         fi
