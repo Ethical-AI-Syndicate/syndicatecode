@@ -22,7 +22,7 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 )
 
-func TestHandleEventStream_DeliversEventsAndResumes(t *testing.T) {
+func TestHandleEventStream_DeliversEventsAndResumes_Bead_l3d_2_4(t *testing.T) {
 	eventStore, err := audit.NewEventStore(filepath.Join(t.TempDir(), "events.db"))
 	if err != nil {
 		t.Fatalf("failed to create event store: %v", err)
