@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 type API interface {
@@ -231,11 +233,40 @@ func (a *App) handleApprovals(ctx context.Context) error {
 }
 
 func (a *App) handleDecision(ctx context.Context, approvalID, decision, reason string) error {
-	approval, err := a.api.DecideApproval(ctx, approvalID, DecideApprovalRequest{Decision: decision, Reason: reason})
+	approval, err := a.findPendingApproval(ctx, approvalID)
 	if err != nil {
 		return err
 	}
-	return a.writef("%s -> %s\n", approval.ID, approval.State)
+	if approval.ExpiresAt != "" {
+		expiresAt, parseErr := time.Parse(time.RFC3339, approval.ExpiresAt)
+		if parseErr == nil && time.Now().UTC().After(expiresAt) {
+			return fmt.Errorf("approval %s expired", approvalID)
+		}
+	}
+
+	decided, err := a.api.DecideApproval(ctx, approvalID, DecideApprovalRequest{Decision: decision, Reason: reason})
+	if err != nil {
+		return err
+	}
+	return a.writef("%s -> %s\n", decided.ID, decided.State)
+}
+
+func (a *App) findPendingApproval(ctx context.Context, approvalID string) (*Approval, error) {
+	approvals, err := a.api.ListApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, approval := range approvals {
+		if approval.ID != approvalID {
+			continue
+		}
+		if approval.State != "pending" {
+			return nil, fmt.Errorf("approval %s is in state %s", approvalID, approval.State)
+		}
+		copy := approval
+		return &copy, nil
+	}
+	return nil, errors.New("approval not found")
 }
 
 func (a *App) handleContext(ctx context.Context, sessionID, turnID string) error {

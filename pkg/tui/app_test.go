@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 type mockAPI struct {
@@ -204,5 +205,45 @@ func TestCommandMappings_Bead_l3d_15_2(t *testing.T) {
 		if actual != expected {
 			t.Fatalf("unexpected mapping for command %q: got %+v want %+v", command, actual, expected)
 		}
+	}
+}
+
+func TestApp_ApprovalCommandsRejectInvalidLifecycle_Bead_l3d_15_3(t *testing.T) {
+	api := &mockAPI{
+		approvals: []Approval{{ID: "apr-1", ToolName: "write_file", State: "executed", ExpiresAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339)}},
+	}
+	in := strings.NewReader("approve apr-1\nquit\n")
+	out := &bytes.Buffer{}
+	app := NewApp(api, in, out)
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	if len(api.decisions) != 0 {
+		t.Fatalf("expected no approval decisions to be submitted, got %d", len(api.decisions))
+	}
+	if !strings.Contains(out.String(), "approval apr-1 is in state executed") {
+		t.Fatalf("expected lifecycle validation error, got %q", out.String())
+	}
+}
+
+func TestApp_ApprovalCommandsRejectExpired_Bead_l3d_15_3(t *testing.T) {
+	api := &mockAPI{
+		approvals: []Approval{{ID: "apr-2", ToolName: "write_file", State: "pending", ExpiresAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)}},
+	}
+	in := strings.NewReader("approve apr-2\nquit\n")
+	out := &bytes.Buffer{}
+	app := NewApp(api, in, out)
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	if len(api.decisions) != 0 {
+		t.Fatalf("expected no approval decisions to be submitted, got %d", len(api.decisions))
+	}
+	if !strings.Contains(out.String(), "approval apr-2 expired") {
+		t.Fatalf("expected expiry validation error, got %q", out.String())
 	}
 }

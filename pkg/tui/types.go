@@ -21,6 +21,8 @@ type Approval struct {
 	ToolName   string `json:"tool_name"`
 	State      string `json:"state"`
 	SideEffect string `json:"side_effect"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
+	ArgsHash   string `json:"arguments_hash,omitempty"`
 }
 
 type ContextFragment struct {
