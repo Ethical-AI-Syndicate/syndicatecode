@@ -96,7 +96,7 @@ bead-evidence:
       fi
       for bead in "${BEADS[@]}"; do
         # Check if bead exists and is already closed - skip closure check if so
-        BEAD_STATUS=$(go run ./tools/beads show "$bead" --json 2>&1)
+        BEAD_STATUS=$(go run ./tools/beads show "$bead" --json 2>&1 || true)
         if echo "$BEAD_STATUS" | grep -q "not found\|No issues found"; then
           echo "Bead $bead not found in bd - skipping"
           continue
