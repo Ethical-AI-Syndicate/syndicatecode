@@ -1,0 +1,87 @@
+{
+  "bead_id": "l3d.10.3",
+  "bead_issue_id": "bead-loop-3-l3d.10.3",
+  "generated_at_utc": "2026-03-09T20:18:40Z",
+  "generator_version": "v2",
+  "head_sha": "c154b8654d3a578190131409409447b60a92800c",
+  "range": "origin/master..HEAD",
+  "commits": [
+    {
+      "sha": "c154b8654d3a578190131409409447b60a92800c",
+      "subject": "chore(ci): retrigger pipeline after master sync [l3d.10.3]",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "sha": "326473e373ec85c3f7ce0f46d57def48e2efbc32",
+      "subject": "bd:l3d.10.3 refresh evidence after full CI pass [l3d.10.3]",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "sha": "518f132a34e7b905a40b2a9d15fc2a6d102546d8",
+      "subject": "bd:l3d.10.3 implement soft/hard/tombstone session deletion semantics [l3d.10.3]",
+      "beads": [
+        "l3d.10.3"
+      ]
+    }
+  ],
+  "changed_files": [
+    "bead-evidence/l3d.10.3.json",
+    "internal/audit/event_store.go",
+    "internal/session/manager.go",
+    "internal/session/manager_test.go"
+  ],
+  "changed_go_files": [
+    "internal/audit/event_store.go",
+    "internal/session/manager.go"
+  ],
+  "changed_test_files": [
+    "internal/session/manager_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/session/manager_test.go",
+      "line": 58,
+      "test_name": "TestManager_DeleteSoftHidesSession_Bead_l3d_10_3",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "file": "internal/session/manager_test.go",
+      "line": 88,
+      "test_name": "TestManager_DeleteHardRemovesSessionArtifacts_Bead_l3d_10_3",
+      "beads": [
+        "l3d.10.3"
+      ]
+    },
+    {
+      "file": "internal/session/manager_test.go",
+      "line": 114,
+      "test_name": "TestManager_DeleteTombstoneKeepsMinimalAudit_Bead_l3d_10_3",
+      "beads": [
+        "l3d.10.3"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": true,
+    "reasons": null
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}
