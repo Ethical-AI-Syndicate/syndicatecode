@@ -21,6 +21,8 @@ import (
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
+	//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+	"nhooyr.io/websocket"
 )
 
 type Config struct {
@@ -52,6 +54,7 @@ type Server struct {
 
 const redactionAuditSessionID = "system:redaction"
 const approvalAuditSessionID = "system:approval"
+const eventStreamPollInterval = 200 * time.Millisecond
 
 type redactionNotice struct {
 	Path           string `json:"path"`
@@ -288,6 +291,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/approvals", s.handleApprovals)
 	mux.HandleFunc("/api/v1/approvals/", s.handleApprovalByID)
 	mux.HandleFunc("/api/v1/policy", s.handlePolicy)
+	mux.HandleFunc("/api/v1/events/stream", s.handleEventStream)
 	mux.HandleFunc("/api/v1/tools/execute", s.handleToolExecute)
 }
 
@@ -780,6 +784,158 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		log.Printf("failed to encode policy: %v", err)
 	}
+}
+
+func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
+	cursorParam := r.URL.Query().Get("cursor")
+	cursor, err := parseEventCursor(cursorParam)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid cursor: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID != "" && s.sessionMgr != nil {
+		if _, err := s.sessionMgr.Get(r.Context(), sessionID); err != nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		log.Printf("failed to accept event stream websocket: %v", err)
+		http.Error(w, "websocket upgrade failed", http.StatusBadRequest)
+		return
+	}
+
+	go func() {
+		defer cancel()
+		for {
+			//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+			if _, _, err := conn.Read(ctx); err != nil {
+				return
+			}
+		}
+	}()
+
+	ticker := time.NewTicker(eventStreamPollInterval)
+	defer ticker.Stop()
+
+	for {
+		cursor, err = s.streamNewEvents(ctx, conn, sessionID, cursor)
+		if err != nil {
+			log.Printf("failed to stream events: %v", err)
+			//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+			_ = conn.Close(websocket.StatusInternalError, "stream error")
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+type eventStreamCursor struct {
+	timestamp time.Time
+	eventID   string
+}
+
+func parseEventCursor(value string) (eventStreamCursor, error) {
+	if value == "" {
+		return eventStreamCursor{}, nil
+	}
+	parts := strings.Split(value, "|")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return eventStreamCursor{}, fmt.Errorf("timestamp missing")
+	}
+
+	ts, err := time.Parse(time.RFC3339, parts[0])
+	if err != nil {
+		return eventStreamCursor{}, fmt.Errorf("timestamp parse error: %w", err)
+	}
+
+	cursor := eventStreamCursor{timestamp: ts.UTC()}
+	if len(parts) > 1 {
+		cursor.eventID = parts[1]
+	}
+	return cursor, nil
+}
+
+//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+func (s *Server) streamNewEvents(ctx context.Context, conn *websocket.Conn, sessionID string, cursor eventStreamCursor) (eventStreamCursor, error) {
+	events, err := s.eventsSince(ctx, sessionID, cursor.timestamp)
+	if err != nil {
+		return cursor, err
+	}
+	foundCursor := cursor.eventID == ""
+
+	for _, ev := range events {
+		if !foundCursor {
+			switch {
+			case ev.Timestamp.Before(cursor.timestamp):
+				continue
+			case ev.Timestamp.After(cursor.timestamp):
+				foundCursor = true
+			case ev.ID == cursor.eventID:
+				foundCursor = true
+				continue
+			default:
+				continue
+			}
+		}
+
+		payload, err := json.Marshal(ev)
+		if err != nil {
+			return cursor, err
+		}
+		//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+		if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
+			return cursor, err
+		}
+
+		cursor.timestamp = ev.Timestamp
+		cursor.eventID = ev.ID
+	}
+
+	return cursor, nil
+}
+
+func (s *Server) eventsSince(ctx context.Context, sessionID string, since time.Time) ([]audit.Event, error) {
+	if s.eventStore == nil {
+		return nil, fmt.Errorf("event store unavailable")
+	}
+
+	var (
+		events []audit.Event
+		err    error
+	)
+	if sessionID == "" {
+		events, err = s.eventStore.QueryAll(ctx)
+	} else {
+		events, err = s.eventStore.QueryBySession(ctx, sessionID)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	filtered := make([]audit.Event, 0, len(events))
+	for _, ev := range events {
+		if ev.Timestamp.Before(since) {
+			continue
+		}
+		filtered = append(filtered, ev)
+	}
+	return filtered, nil
 }
 
 func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
