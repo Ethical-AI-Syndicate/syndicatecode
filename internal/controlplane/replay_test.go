@@ -194,3 +194,64 @@ func TestHandleSessionByID_EventsFilterWithNoMatchesReturnsEmptyList(t *testing.
 		t.Fatalf("expected empty filtered event list, got %d entries", len(events))
 	}
 }
+
+func TestHandleSessionByID_EventsDeterministicOrder_Bead_l3d_2_2(t *testing.T) {
+	eventStore, err := audit.NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := eventStore.Close(); closeErr != nil {
+			t.Fatalf("failed to close event store: %v", closeErr)
+		}
+	})
+
+	sessionMgr := session.NewManager(eventStore)
+	created, err := sessionMgr.Create(context.Background(), "/tmp/repo", "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	timestamp := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Second)
+	if err := eventStore.Append(context.Background(), audit.Event{
+		ID:        "b-event",
+		SessionID: created.ID,
+		Timestamp: timestamp,
+		EventType: "turn_completed",
+		Actor:     "system",
+		Payload:   json.RawMessage(`{"seq":2}`),
+	}); err != nil {
+		t.Fatalf("failed to append first event: %v", err)
+	}
+	if err := eventStore.Append(context.Background(), audit.Event{
+		ID:        "a-event",
+		SessionID: created.ID,
+		Timestamp: timestamp,
+		EventType: "turn_completed",
+		Actor:     "system",
+		Payload:   json.RawMessage(`{"seq":1}`),
+	}); err != nil {
+		t.Fatalf("failed to append second event: %v", err)
+	}
+
+	server := &Server{sessionMgr: sessionMgr, eventStore: eventStore}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+created.ID+"/events?event_type=turn_completed", nil)
+	rec := httptest.NewRecorder()
+	server.handleSessionByID(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var events []audit.Event
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
+		t.Fatalf("failed to decode events: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 filtered events, got %d", len(events))
+	}
+
+	if events[0].ID != "a-event" || events[1].ID != "b-event" {
+		t.Fatalf("expected deterministic ordering by (timestamp,id): [a-event b-event], got [%s %s]", events[0].ID, events[1].ID)
+	}
+}

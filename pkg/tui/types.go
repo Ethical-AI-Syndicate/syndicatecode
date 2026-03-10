@@ -1,5 +1,7 @@
 package tui
 
+import "encoding/json"
+
 type Session struct {
 	ID        string `json:"id"`
 	RepoPath  string `json:"repo_path"`
@@ -19,6 +21,8 @@ type Approval struct {
 	ToolName   string `json:"tool_name"`
 	State      string `json:"state"`
 	SideEffect string `json:"side_effect"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
+	ArgsHash   string `json:"arguments_hash,omitempty"`
 }
 
 type ContextFragment struct {
@@ -27,6 +31,17 @@ type ContextFragment struct {
 	TokenCount int    `json:"token_count"`
 	Truncated  bool   `json:"truncated"`
 }
+
+type ReplayEvent struct {
+	ID        string          `json:"id"`
+	SessionID string          `json:"session_id"`
+	Timestamp string          `json:"timestamp"`
+	EventType string          `json:"event_type"`
+	Actor     string          `json:"actor"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+type PolicyDocument map[string]interface{}
 
 type CreateSessionRequest struct {
 	RepoPath  string `json:"repo_path"`

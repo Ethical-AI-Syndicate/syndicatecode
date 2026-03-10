@@ -1,4 +1,4 @@
-.PHONY: verify verify-json ci-local format-check lint test race build schema-generate beads-verify beads-verify-commits beads-verify-pr beads-evidence beads-check-closure
+.PHONY: verify verify-json ci-local format-check lint test race build schema-generate beads-verify beads-verify-commits beads-verify-pr beads-evidence beads-check-closure go-no-go-report
 
 RANGE ?= origin/master..HEAD
 BEAD ?=
@@ -61,3 +61,6 @@ beads-check-closure:
 	@go run ./tools/beads check-closure --bead "$(BEAD)"
 
 ci-local: format-check lint race build beads-verify
+
+go-no-go-report:
+	@go run ./tools/gonogo --range "$(RANGE)" $(if $(BEAD),--bead "$(BEAD)",) --output bead-evidence/v1-go-no-go.json

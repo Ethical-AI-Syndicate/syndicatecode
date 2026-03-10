@@ -1,16 +1,23 @@
 {
-  "bead_id": "l3d.10.4",
-  "bead_issue_id": "SyndicateCode-l3d.10.4",
-  "generated_at_utc": "2026-03-10T08:36:24Z",
+  "bead_id": "l3d.13.4",
+  "bead_issue_id": "SyndicateCode-l3d.13.4",
+  "generated_at_utc": "2026-03-10T12:44:49Z",
   "generator_version": "v2",
-  "head_sha": "98d658f95f332e6baf537f5846a462f39a97b35e",
+  "head_sha": "9a557f6bc53b709beab4184ba15dabe699740c8b",
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "98d658f95f332e6baf537f5846a462f39a97b35e",
-      "subject": "feat(controlplane): add retention cleanup scheduler for l3d.10.4 [l3d.10.4]",
+      "sha": "9a557f6bc53b709beab4184ba15dabe699740c8b",
+      "subject": "test(verify): add bead-tagged go-no-go suite [l3d.13.4]",
       "beads": [
-        "l3d.10.4"
+        "l3d.13.4"
+      ]
+    },
+    {
+      "sha": "d310fd5d6aec6fcd5fd3ed4400db91287a277ba4",
+      "subject": "feat(verify): automate go-no-go evidence report [l3d.13.4]",
+      "beads": [
+        "l3d.13.4"
       ]
     }
   ],
@@ -41,6 +48,7 @@
     "internal/context/context_test.go",
     "internal/controlplane/approval.go",
     "internal/controlplane/approval_test.go",
+    "internal/controlplane/conformance_suite_test.go",
     "internal/controlplane/error_envelope.go",
     "internal/controlplane/error_envelope_test.go",
     "internal/controlplane/event_stream_test.go",
@@ -57,6 +65,8 @@
     "internal/patch/proposal_test.go",
     "internal/patch/validator.go",
     "internal/patch/validator_test.go",
+    "internal/tools/executor.go",
+    "internal/tools/executor_test.go",
     "internal/tools/models.go",
     "internal/tools/models_test.go",
     "internal/tools/registry_test.go",
@@ -64,8 +74,14 @@
     "pkg/tui/app.go",
     "pkg/tui/app_test.go",
     "pkg/tui/client.go",
+    "pkg/tui/client_test.go",
+    "pkg/tui/types.go",
+    "pkg/tui/types_test.go",
     "tools/beads/main.go",
     "tools/beads/main_test.go",
+    "tools/gonogo/main.go",
+    "tools/gonogo/main_test.go",
+    "tools/gonogo/report_test.go",
     "tools/verify/main.go"
   ],
   "changed_go_files": [
@@ -78,16 +94,20 @@
     "internal/controlplane/startup_restore.go",
     "internal/patch/proposal.go",
     "internal/patch/validator.go",
+    "internal/tools/executor.go",
     "internal/tools/models.go",
     "pkg/tui/app.go",
     "pkg/tui/client.go",
+    "pkg/tui/types.go",
     "tools/beads/main.go",
+    "tools/gonogo/main.go",
     "tools/verify/main.go"
   ],
   "changed_test_files": [
     "internal/audit/event_store_test.go",
     "internal/context/context_test.go",
     "internal/controlplane/approval_test.go",
+    "internal/controlplane/conformance_suite_test.go",
     "internal/controlplane/error_envelope_test.go",
     "internal/controlplane/event_stream_test.go",
     "internal/controlplane/provider_policy_test.go",
@@ -98,43 +118,24 @@
     "internal/controlplane/turns_api_test.go",
     "internal/patch/proposal_test.go",
     "internal/patch/validator_test.go",
+    "internal/tools/executor_test.go",
     "internal/tools/models_test.go",
     "internal/tools/registry_test.go",
     "pkg/api/schema_artifacts_test.go",
     "pkg/tui/app_test.go",
-    "tools/beads/main_test.go"
+    "pkg/tui/client_test.go",
+    "pkg/tui/types_test.go",
+    "tools/beads/main_test.go",
+    "tools/gonogo/main_test.go",
+    "tools/gonogo/report_test.go"
   ],
   "linked_tests": [
     {
-      "file": "internal/controlplane/retention_scheduler_test.go",
-      "line": 12,
-      "test_name": "TestRetentionCleanupSchedulerDeletesExpiredArtifacts_Bead_l3d_10_4",
+      "file": "tools/gonogo/main_test.go",
+      "line": 5,
+      "test_name": "TestGoNoGoReportAutomation_Bead_l3d_13_4",
       "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 9,
-      "test_name": "TestRunVerification_JSONContract_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 58,
-      "test_name": "TestRunVerification_MetadataStrictFailure_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 84,
-      "test_name": "TestRunVerification_AllRequiredPhasesPass_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
+        "l3d.13.4"
       ]
     }
   ],

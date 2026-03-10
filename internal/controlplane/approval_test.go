@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,6 +122,33 @@ func TestApprovalManager_ExpiryEmitsTransitionCausality(t *testing.T) {
 	}
 	if last.Trigger != "expired" {
 		t.Fatalf("expected trigger expired, got %s", last.Trigger)
+	}
+}
+
+func TestApprovalManager_DecideExpiredEmitsTransitionCausality(t *testing.T) {
+	transitions := make([]ApprovalTransition, 0)
+	mgr := NewApprovalManager(1*time.Millisecond, WithTransitionRecorder(func(transition ApprovalTransition) {
+		transitions = append(transitions, transition)
+	}))
+
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
+	if err != nil {
+		t.Fatalf("propose failed: %v", err)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	_, err = mgr.Decide(approval.ID, "approve", "")
+	if !errors.Is(err, ErrApprovalExpired) {
+		t.Fatalf("expected ErrApprovalExpired, got %v", err)
+	}
+
+	if len(transitions) < 2 {
+		t.Fatalf("expected expiry transition to be recorded, got %d transitions", len(transitions))
+	}
+
+	last := transitions[len(transitions)-1]
+	if last.FromState != ApprovalStatePending || last.ToState != ApprovalStateCancelled || last.Trigger != "expired" {
+		t.Fatalf("expected pending->cancelled expired transition, got %s->%s trigger=%s", last.FromState, last.ToState, last.Trigger)
 	}
 }
 
@@ -296,7 +324,10 @@ func newApprovalTestServer(t *testing.T) *Server {
 
 	executor := tools.NewExecutor(registry, nil)
 	executor.RegisterHandler("echo", tools.EchoHandler())
-	executor.RegisterHandler("write_file", tools.WriteFileHandler("/tmp"))
+	executor.RegisterHandler("write_file", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		content, _ := input["content"].(string)
+		return map[string]interface{}{"bytes_written": len(content)}, nil
+	})
 	executor.RegisterHandler("restricted_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
 		return map[string]interface{}{"exit_code": 0}, nil
 	})
@@ -459,6 +490,91 @@ func TestHandleToolExecuteRecordsAuditSafeRedactionEvents(t *testing.T) {
 	if !found {
 		t.Fatalf("expected tool_output_redaction event to be recorded")
 	}
+}
+
+func TestHandleApprovalByID_ArgumentMutationCancelsApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+
+	body := bytes.NewBufferString(`{"tool_name":"write_file","input":{"path":"/tmp/x.txt","content":"hello"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+	server.handleToolExecute(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for pending approval, got %d", rec.Code)
+	}
+
+	var approval Approval
+	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil {
+		t.Fatalf("decode approval: %v", err)
+	}
+
+	server.approvalMgr.mu.Lock()
+	server.approvalMgr.items[approval.ID].Call.Input["content"] = "mutated"
+	server.approvalMgr.mu.Unlock()
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when approval arguments mutated, got %d", decisionRec.Code)
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state, got %s", updated.State)
+	}
+	if !strings.Contains(updated.DecisionReason, "mutated") {
+		t.Fatalf("expected mutation diagnostic reason, got %q", updated.DecisionReason)
+	}
+}
+
+func TestHandleApprovalByID_ExecutionFailureCancelsApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.toolExecutor.RegisterHandler("write_file", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		return nil, errors.New("synthetic write failure")
+	})
+
+	body := bytes.NewBufferString(`{"tool_name":"write_file","input":{"path":"/tmp/x.txt","content":"hello"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+	server.handleToolExecute(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for pending approval, got %d", rec.Code)
+	}
+
+	var approval Approval
+	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil {
+		t.Fatalf("decode approval: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, decisionReq)
+	if decisionRec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 on execution failure, got %d", decisionRec.Code)
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state after failed execution, got %s", updated.State)
+	}
+	if !strings.Contains(updated.DecisionReason, "execution failed") {
+		t.Fatalf("expected execution diagnostic reason, got %q", updated.DecisionReason)
+	}
+}
+
+func TestApprovalFaultScenarios_Bead_l3d_17_4(t *testing.T) {
+	t.Run("decide expired emits transition", TestApprovalManager_DecideExpiredEmitsTransitionCausality)
+	t.Run("mutation cancels approved action", TestHandleApprovalByID_ArgumentMutationCancelsApproval)
+	t.Run("execution failure cancels approval", TestHandleApprovalByID_ExecutionFailureCancelsApproval)
 }
 
 // TestApprovalExecutionContextStored_Bead_l3d_8_4 is the bead-tagged conformance entry

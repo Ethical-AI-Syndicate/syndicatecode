@@ -73,6 +73,8 @@ func (e *Executor) Execute(ctx context.Context, call ToolCall) (*ToolResult, err
 
 	if execErr != nil {
 		result.Error = execErr.Error()
+		result.Duration = time.Since(start).Milliseconds()
+		return result, execErr
 	} else {
 		result.Success = true
 		result.Output = output
