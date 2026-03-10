@@ -1,17 +1,24 @@
 {
-  "bead_id": "l3d.1",
-  "bead_issue_id": "SyndicateCode-l3d.1",
+  "bead_id": "l3d.14.4",
+  "bead_issue_id": "SyndicateCode-l3d.14.4",
   "bead_issue_status": "open",
-  "generated_at_utc": "2026-03-10T00:29:16Z",
+  "generated_at_utc": "2026-03-10T00:28:36Z",
   "generator_version": "v2",
   "head_sha": "131ffd49c67c59ac148953723dbb737c9cf244ca",
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "de2f0b61a584ca9dac9c10104e1dbe28f997f69d",
-      "subject": "docs(agents): streamline AGENTS.md to Beads integration guide [l3d.1]",
+      "sha": "131ffd49c67c59ac148953723dbb737c9cf244ca",
+      "subject": "test(schema): add bead-tagged conformance test entry point for l3d.14.4 [l3d.14.4]",
       "beads": [
-        "l3d.1"
+        "l3d.14.4"
+      ]
+    },
+    {
+      "sha": "d5535d34d0aeab14f95b9abbf28965a60b96ae2c",
+      "subject": "feat(schema): add committed registry artifact and CI drift detection [l3d.14.4]",
+      "beads": [
+        "l3d.14.4"
       ]
     }
   ],
@@ -95,139 +102,11 @@
   ],
   "linked_tests": [
     {
-      "file": "internal/context/context_test.go",
-      "line": 280,
-      "test_name": "TestTurnManager_RejectsSecondActiveMutableTurn_Bead_l3d_1_4",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "internal/context/context_test.go",
-      "line": 326,
-      "test_name": "TestTurnManager_AllowsNewTurnAfterTerminalTransition_Bead_l3d_1_4",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "internal/controlplane/server_test.go",
-      "line": 16,
-      "test_name": "TestCreateTurn_RejectsConcurrentMutableTurnsAndPreservesReadOnlyAccess_Bead_l3d_1_4",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "internal/controlplane/startup_restore_test.go",
-      "line": 153,
-      "test_name": "TestRestoreRuntimeState_RequiresOperatorReentryForInterruptedRiskyApproval_Bead_l3d_1_3",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
       "file": "pkg/api/schema_artifacts_test.go",
       "line": 132,
       "test_name": "TestSchemaDocumentationAndDriftDetection_Bead_l3d_14_4",
       "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 11,
-      "test_name": "TestParseCanonicalBeads_Bead_l3d_100",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 19,
-      "test_name": "TestParseMalformedBeads_Bead_l3d_101",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 27,
-      "test_name": "TestValidatePRMetadata_Bead_l3d_102",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 50,
-      "test_name": "TestParseBeadTagsFromTestFile_Bead_l3d_103",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 55,
-      "test_name": "TestSessionTransition_Bead_l3d_1_3",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 72,
-      "test_name": "TestEvaluateEvidence_Bead_l3d_1",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 92,
-      "test_name": "TestValidateChangedGoFiles_NoChangedTests_Bead_l3d_1",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 99,
-      "test_name": "TestBeadIssueID_UsesGitRootRepoName_Bead_l3d_10_2",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/beads/main_test.go",
-      "line": 115,
-      "test_name": "TestParseOptions_ShowPositionalBead_Bead_l3d_10_2",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 9,
-      "test_name": "TestRunVerification_JSONContract_Bead_l3d_10_4",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 58,
-      "test_name": "TestRunVerification_MetadataStrictFailure_Bead_l3d_10_4",
-      "beads": [
-        "l3d.1"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 84,
-      "test_name": "TestRunVerification_AllRequiredPhasesPass_Bead_l3d_10_4",
-      "beads": [
-        "l3d.1"
+        "l3d.14.4"
       ]
     }
   ],
