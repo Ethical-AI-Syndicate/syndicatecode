@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -422,6 +423,13 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, ses
 		}
 		events = filtered
 	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].ID < events[j].ID
+		}
+		return events[i].Timestamp.Before(events[j].Timestamp)
+	})
 
 	if err := json.NewEncoder(w).Encode(events); err != nil {
 		log.Printf("failed to encode session events: %v", err)

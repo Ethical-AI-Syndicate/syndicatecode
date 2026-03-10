@@ -238,7 +238,7 @@ func (s *EventStore) Append(ctx context.Context, event Event) error {
 
 func (s *EventStore) QueryBySession(ctx context.Context, sessionID string) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload 
+		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload
 		 FROM events WHERE session_id = ? ORDER BY timestamp ASC`,
 		sessionID,
 	)
@@ -254,7 +254,7 @@ func (s *EventStore) QueryBySession(ctx context.Context, sessionID string) ([]Ev
 
 func (s *EventStore) QueryAll(ctx context.Context) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload 
+		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload
 		 FROM events ORDER BY timestamp ASC`,
 	)
 	if err != nil {
