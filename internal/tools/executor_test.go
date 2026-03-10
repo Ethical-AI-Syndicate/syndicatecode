@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -116,5 +117,36 @@ func TestExecutor_OutputLimit(t *testing.T) {
 	}
 	if result != nil && !result.OutputTruncated {
 		t.Error("expected output truncated flag")
+	}
+}
+
+func TestExecutor_HandlerErrorIsReturned(t *testing.T) {
+	reg := NewRegistry()
+	_ = reg.Register(ToolDefinition{
+		Name:         "fails",
+		Version:      "1",
+		SideEffect:   SideEffectNone,
+		InputSchema:  map[string]FieldSchema{},
+		OutputSchema: map[string]FieldSchema{},
+		Limits: ExecutionLimits{
+			TimeoutSeconds: 5,
+			MaxOutputBytes: 1000,
+		},
+	})
+
+	exec := NewExecutor(reg, nil)
+	exec.RegisterHandler("fails", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		return nil, errors.New("synthetic tool failure")
+	})
+
+	result, err := exec.Execute(context.Background(), ToolCall{ToolName: "fails", Input: map[string]interface{}{}})
+	if err == nil {
+		t.Fatal("expected handler error to be returned")
+	}
+	if result == nil || result.Success {
+		t.Fatalf("expected failed result, got %+v", result)
+	}
+	if result.Error == "" {
+		t.Fatal("expected error message to be recorded")
 	}
 }

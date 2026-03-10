@@ -181,8 +181,11 @@ func (m *ApprovalManager) Decide(id, decision, reason string) (*Approval, error)
 		return nil, ErrInvalidApprovalState
 	}
 	if now.After(approval.ExpiresAt) {
+		fromState := approval.State
 		approval.State = ApprovalStateCancelled
+		approval.DecisionReason = "approval expired before decision"
 		approval.UpdatedAt = now
+		m.recordTransition(approval, fromState, ApprovalStateCancelled, "expired", "", approval.DecisionReason, now)
 		return nil, ErrApprovalExpired
 	}
 
@@ -232,6 +235,35 @@ func (m *ApprovalManager) MarkExecuted(id string) error {
 	approval.UpdatedAt = now
 	m.recordTransition(approval, fromState, ApprovalStateExecuted, "approved_execution", "approve", approval.DecisionReason, now)
 	return nil
+}
+
+func (m *ApprovalManager) Cancel(id, reason, trigger string) (*Approval, error) {
+	now := time.Now().UTC()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	approval, ok := m.items[id]
+	if !ok {
+		return nil, ErrApprovalNotFound
+	}
+
+	if err := state.ValidateApprovalTransition(approval.State, ApprovalStateCancelled); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidApprovalState, err)
+	}
+
+	fromState := approval.State
+	approval.State = ApprovalStateCancelled
+	approval.DecisionReason = reason
+	approval.UpdatedAt = now
+
+	if trigger == "" {
+		trigger = "cancelled"
+	}
+	m.recordTransition(approval, fromState, ApprovalStateCancelled, trigger, "", reason, now)
+
+	copy := *approval
+	return &copy, nil
 }
 
 func (m *ApprovalManager) Snapshot() []Approval {

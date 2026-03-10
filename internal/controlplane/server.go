@@ -754,11 +754,23 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Decision == "approve" {
+		computedHash, hashErr := hashToolCall(approval.Call)
+		if hashErr != nil {
+			http.Error(w, fmt.Sprintf("failed to validate approved action: %v", hashErr), http.StatusInternalServerError)
+			return
+		}
+		if computedHash != approval.ArgumentsHash {
+			_, _ = s.approvalMgr.Cancel(approvalID, "tool arguments mutated after approval", "arguments_mutated")
+			http.Error(w, "approved action payload no longer matches recorded hash", http.StatusConflict)
+			return
+		}
+
 		result, execErr := s.toolExecutor.Execute(r.Context(), approval.Call)
 		if toolDef, ok := s.toolRegistry.Get(approval.Call.ToolName); ok {
 			s.recordMCPCallEvent(r.Context(), approval.Call, toolDef, result, execErr)
 		}
 		if execErr != nil {
+			_, _ = s.approvalMgr.Cancel(approvalID, fmt.Sprintf("execution failed: %v", execErr), "execution_failed")
 			http.Error(w, fmt.Sprintf("failed to execute approved action: %v", execErr), http.StatusInternalServerError)
 			return
 		}
@@ -889,6 +901,7 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 type eventStreamCursor struct {
 	timestamp time.Time
 	eventID   string
+	coarse    bool
 }
 
 func parseEventCursor(value string) (eventStreamCursor, error) {
@@ -906,6 +919,7 @@ func parseEventCursor(value string) (eventStreamCursor, error) {
 	}
 
 	cursor := eventStreamCursor{timestamp: ts.UTC()}
+	cursor.coarse = !strings.Contains(parts[0], ".")
 	if len(parts) > 1 {
 		cursor.eventID = parts[1]
 	}
@@ -922,6 +936,13 @@ func (s *Server) streamNewEvents(ctx context.Context, conn *websocket.Conn, sess
 
 	for _, ev := range events {
 		if !foundCursor {
+			if cursor.eventID != "" && cursor.coarse && ev.Timestamp.Truncate(time.Second).Equal(cursor.timestamp) {
+				if ev.ID == cursor.eventID {
+					foundCursor = true
+				}
+				continue
+			}
+
 			switch {
 			case ev.Timestamp.Before(cursor.timestamp):
 				continue
