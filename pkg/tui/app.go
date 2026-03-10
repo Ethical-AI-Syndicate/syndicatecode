@@ -26,8 +26,27 @@ type App struct {
 	output io.Writer
 }
 
+type endpointBinding struct {
+	Method       string
+	PathTemplate string
+}
+
 func NewApp(api API, input io.Reader, output io.Writer) *App {
 	return &App{api: api, input: input, output: output}
+}
+
+func commandMappings() map[string]endpointBinding {
+	return map[string]endpointBinding{
+		"start":     {Method: "POST", PathTemplate: "/api/v1/sessions"},
+		"ask":       {Method: "POST", PathTemplate: "/api/v1/sessions/{session_id}/turns"},
+		"approvals": {Method: "GET", PathTemplate: "/api/v1/approvals"},
+		"approve":   {Method: "POST", PathTemplate: "/api/v1/approvals/{approval_id}"},
+		"deny":      {Method: "POST", PathTemplate: "/api/v1/approvals/{approval_id}"},
+		"context":   {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/turns/{turn_id}/context"},
+		"policy":    {Method: "GET", PathTemplate: "/api/v1/policy"},
+		"replay":    {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+		"diff":      {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+	}
 }
 
 func (a *App) Run(ctx context.Context) error {

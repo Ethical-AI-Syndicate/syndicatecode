@@ -180,3 +180,29 @@ func TestApp_PrimaryCommandSurface_Bead_l3d_15_1(t *testing.T) {
 		t.Fatalf("expected diff replay output, got %q", content)
 	}
 }
+
+func TestCommandMappings_Bead_l3d_15_2(t *testing.T) {
+	mappings := commandMappings()
+
+	required := map[string]endpointBinding{
+		"start":     {Method: "POST", PathTemplate: "/api/v1/sessions"},
+		"ask":       {Method: "POST", PathTemplate: "/api/v1/sessions/{session_id}/turns"},
+		"approvals": {Method: "GET", PathTemplate: "/api/v1/approvals"},
+		"approve":   {Method: "POST", PathTemplate: "/api/v1/approvals/{approval_id}"},
+		"deny":      {Method: "POST", PathTemplate: "/api/v1/approvals/{approval_id}"},
+		"context":   {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/turns/{turn_id}/context"},
+		"policy":    {Method: "GET", PathTemplate: "/api/v1/policy"},
+		"replay":    {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+		"diff":      {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+	}
+
+	for command, expected := range required {
+		actual, ok := mappings[command]
+		if !ok {
+			t.Fatalf("missing mapping for command %q", command)
+		}
+		if actual != expected {
+			t.Fatalf("unexpected mapping for command %q: got %+v want %+v", command, actual, expected)
+		}
+	}
+}
