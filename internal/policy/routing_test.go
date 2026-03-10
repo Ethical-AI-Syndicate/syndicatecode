@@ -2,7 +2,7 @@ package policy
 
 import "testing"
 
-func TestRouteEngineSelectPrefersLocalWhenEligible(t *testing.T) {
+func TestRouteEngineSelectPrefersLocalWhenEligible_Bead_l3d_5_2(t *testing.T) {
 	engine := NewRouteEngine([]ProviderRoute{
 		{
 			Name:               "remote-fast",
@@ -41,7 +41,7 @@ func TestRouteEngineSelectPrefersLocalWhenEligible(t *testing.T) {
 	}
 }
 
-func TestRouteEngineSelectFiltersIneligibleProviders(t *testing.T) {
+func TestRouteEngineSelectFiltersIneligibleProviders_Bead_l3d_5_2(t *testing.T) {
 	engine := NewRouteEngine([]ProviderRoute{
 		{
 			Name:               "missing-capability",
@@ -79,7 +79,7 @@ func TestRouteEngineSelectFiltersIneligibleProviders(t *testing.T) {
 	}
 }
 
-func TestRouteEngineSelectIsDeterministicOnTie(t *testing.T) {
+func TestRouteEngineSelectIsDeterministicOnTie_Bead_l3d_5_2(t *testing.T) {
 	engine := NewRouteEngine([]ProviderRoute{
 		{
 			Name:               "provider-b",
