@@ -126,3 +126,14 @@ func TestGeneratedArtifactMatchesCommittedFile(t *testing.T) {
 			string(data), generated)
 	}
 }
+
+// TestSchemaDocumentationAndDriftDetection_Bead_l3d_14_4 is the bead-tagged conformance
+// entry point for l3d.14.4 (generate schema documentation and SDK-facing artifacts).
+func TestSchemaDocumentationAndDriftDetection_Bead_l3d_14_4(t *testing.T) {
+	t.Parallel()
+	t.Run("deterministic generation", TestGenerateMachineArtifactIsDeterministic)
+	t.Run("includes schema versions", TestGenerateMachineArtifactIncludesSchemaVersions)
+	t.Run("documentation includes field table", TestGenerateDocumentationArtifactIncludesFieldTable)
+	t.Run("detects drift", TestValidateGeneratedArtifactsDetectsDrift)
+	t.Run("matches committed file", TestGeneratedArtifactMatchesCommittedFile)
+}
