@@ -1,16 +1,23 @@
 {
-  "bead_id": "l3d.10.4",
-  "bead_issue_id": "SyndicateCode-l3d.10.4",
-  "generated_at_utc": "2026-03-10T08:36:24Z",
+  "bead_id": "l3d.2.4",
+  "bead_issue_id": "SyndicateCode-l3d.2.4",
+  "generated_at_utc": "2026-03-10T08:26:59Z",
   "generator_version": "v2",
-  "head_sha": "98d658f95f332e6baf537f5846a462f39a97b35e",
+  "head_sha": "1e7b1371db417bdf1b77446bb12e413507211f9b",
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "98d658f95f332e6baf537f5846a462f39a97b35e",
-      "subject": "feat(controlplane): add retention cleanup scheduler for l3d.10.4 [l3d.10.4]",
+      "sha": "1e7b1371db417bdf1b77446bb12e413507211f9b",
+      "subject": "test(controlplane): tag websocket stream coverage for l3d.2.4 [l3d.2.4]",
       "beads": [
-        "l3d.10.4"
+        "l3d.2.4"
+      ]
+    },
+    {
+      "sha": "b873e88f94ce6ee48ef49d9eef71b222de225b3c",
+      "subject": "feat(controlplane): add websocket event stream with resumable cursor [l3d.2.4]",
+      "beads": [
+        "l3d.2.4"
       ]
     }
   ],
@@ -46,8 +53,6 @@
     "internal/controlplane/event_stream_test.go",
     "internal/controlplane/provider_policy.go",
     "internal/controlplane/provider_policy_test.go",
-    "internal/controlplane/replay_test.go",
-    "internal/controlplane/retention_scheduler_test.go",
     "internal/controlplane/server.go",
     "internal/controlplane/server_test.go",
     "internal/controlplane/startup_restore.go",
@@ -91,8 +96,6 @@
     "internal/controlplane/error_envelope_test.go",
     "internal/controlplane/event_stream_test.go",
     "internal/controlplane/provider_policy_test.go",
-    "internal/controlplane/replay_test.go",
-    "internal/controlplane/retention_scheduler_test.go",
     "internal/controlplane/server_test.go",
     "internal/controlplane/startup_restore_test.go",
     "internal/controlplane/turns_api_test.go",
@@ -106,35 +109,11 @@
   ],
   "linked_tests": [
     {
-      "file": "internal/controlplane/retention_scheduler_test.go",
-      "line": 12,
-      "test_name": "TestRetentionCleanupSchedulerDeletesExpiredArtifacts_Bead_l3d_10_4",
+      "file": "internal/controlplane/event_stream_test.go",
+      "line": 25,
+      "test_name": "TestHandleEventStream_DeliversEventsAndResumes_Bead_l3d_2_4",
       "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 9,
-      "test_name": "TestRunVerification_JSONContract_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 58,
-      "test_name": "TestRunVerification_MetadataStrictFailure_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 84,
-      "test_name": "TestRunVerification_AllRequiredPhasesPass_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
+        "l3d.2.4"
       ]
     }
   ],

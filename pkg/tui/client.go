@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -74,6 +75,26 @@ func (c *APIClient) GetTurnContext(ctx context.Context, sessionID, turnID string
 		return nil, err
 	}
 	return fragments, nil
+}
+
+func (c *APIClient) GetPolicy(ctx context.Context) (PolicyDocument, error) {
+	var policy PolicyDocument
+	if err := c.doJSON(ctx, http.MethodGet, "/policy", nil, &policy); err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
+func (c *APIClient) ListSessionEvents(ctx context.Context, sessionID, eventType string) ([]ReplayEvent, error) {
+	var events []ReplayEvent
+	path := fmt.Sprintf("/sessions/%s/events", sessionID)
+	if eventType != "" {
+		path += "?event_type=" + url.QueryEscape(eventType)
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
 }
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in interface{}, out interface{}) error {

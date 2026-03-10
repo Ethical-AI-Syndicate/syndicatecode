@@ -1,16 +1,16 @@
 {
-  "bead_id": "l3d.10.4",
-  "bead_issue_id": "SyndicateCode-l3d.10.4",
-  "generated_at_utc": "2026-03-10T08:36:24Z",
+  "bead_id": "l3d.2.2",
+  "bead_issue_id": "SyndicateCode-l3d.2.2",
+  "generated_at_utc": "2026-03-10T08:31:52Z",
   "generator_version": "v2",
-  "head_sha": "98d658f95f332e6baf537f5846a462f39a97b35e",
+  "head_sha": "d898aef08cf3b0da00b50d2e075559affe629e64",
   "range": "origin/master..HEAD",
   "commits": [
     {
-      "sha": "98d658f95f332e6baf537f5846a462f39a97b35e",
-      "subject": "feat(controlplane): add retention cleanup scheduler for l3d.10.4 [l3d.10.4]",
+      "sha": "d898aef08cf3b0da00b50d2e075559affe629e64",
+      "subject": "feat(controlplane): enforce deterministic replay ordering for l3d.2.2 [l3d.2.2]",
       "beads": [
-        "l3d.10.4"
+        "l3d.2.2"
       ]
     }
   ],
@@ -47,7 +47,6 @@
     "internal/controlplane/provider_policy.go",
     "internal/controlplane/provider_policy_test.go",
     "internal/controlplane/replay_test.go",
-    "internal/controlplane/retention_scheduler_test.go",
     "internal/controlplane/server.go",
     "internal/controlplane/server_test.go",
     "internal/controlplane/startup_restore.go",
@@ -92,7 +91,6 @@
     "internal/controlplane/event_stream_test.go",
     "internal/controlplane/provider_policy_test.go",
     "internal/controlplane/replay_test.go",
-    "internal/controlplane/retention_scheduler_test.go",
     "internal/controlplane/server_test.go",
     "internal/controlplane/startup_restore_test.go",
     "internal/controlplane/turns_api_test.go",
@@ -106,35 +104,11 @@
   ],
   "linked_tests": [
     {
-      "file": "internal/controlplane/retention_scheduler_test.go",
-      "line": 12,
-      "test_name": "TestRetentionCleanupSchedulerDeletesExpiredArtifacts_Bead_l3d_10_4",
+      "file": "internal/controlplane/replay_test.go",
+      "line": 198,
+      "test_name": "TestHandleSessionByID_EventsDeterministicOrder_Bead_l3d_2_2",
       "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 9,
-      "test_name": "TestRunVerification_JSONContract_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 58,
-      "test_name": "TestRunVerification_MetadataStrictFailure_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
-      ]
-    },
-    {
-      "file": "tools/verify/main_test.go",
-      "line": 84,
-      "test_name": "TestRunVerification_AllRequiredPhasesPass_Bead_l3d_10_4",
-      "beads": [
-        "l3d.10.4"
+        "l3d.2.2"
       ]
     }
   ],

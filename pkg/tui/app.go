@@ -3,9 +3,12 @@ package tui
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 type API interface {
@@ -15,6 +18,8 @@ type API interface {
 	ListApprovals(ctx context.Context) ([]Approval, error)
 	DecideApproval(ctx context.Context, approvalID string, req DecideApprovalRequest) (*Approval, error)
 	GetTurnContext(ctx context.Context, sessionID, turnID string) ([]ContextFragment, error)
+	GetPolicy(ctx context.Context) (PolicyDocument, error)
+	ListSessionEvents(ctx context.Context, sessionID, eventType string) ([]ReplayEvent, error)
 }
 
 type App struct {
@@ -23,8 +28,27 @@ type App struct {
 	output io.Writer
 }
 
+type endpointBinding struct {
+	Method       string
+	PathTemplate string
+}
+
 func NewApp(api API, input io.Reader, output io.Writer) *App {
 	return &App{api: api, input: input, output: output}
+}
+
+func commandMappings() map[string]endpointBinding {
+	return map[string]endpointBinding{
+		"start":     {Method: "POST", PathTemplate: "/api/v1/sessions"},
+		"ask":       {Method: "POST", PathTemplate: "/api/v1/sessions/{session_id}/turns"},
+		"approvals": {Method: "GET", PathTemplate: "/api/v1/approvals"},
+		"approve":   {Method: "POST", PathTemplate: "/api/v1/approvals/{approval_id}"},
+		"deny":      {Method: "POST", PathTemplate: "/api/v1/approvals/{approval_id}"},
+		"context":   {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/turns/{turn_id}/context"},
+		"policy":    {Method: "GET", PathTemplate: "/api/v1/policy"},
+		"replay":    {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+		"diff":      {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+	}
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -68,10 +92,21 @@ func (a *App) executeCommand(ctx context.Context, args []string) (bool, error) {
 	switch cmd {
 	case "help":
 		return false, a.printHelp()
-	case "quit", "exit":
+	case "quit", "exit", "stop":
 		return true, nil
 	case "sessions":
 		return false, a.handleSessions(ctx)
+	case "start":
+		if len(args) < 3 {
+			return false, a.writeln("usage: start <repo_path> <trust_tier>")
+		}
+		return false, a.handleNewSession(ctx, args[1], args[2])
+	case "ask":
+		if len(args) < 3 {
+			return false, a.writeln("usage: ask <session_id> <message>")
+		}
+		message := strings.TrimSpace(strings.Join(args[2:], " "))
+		return false, a.handleTurn(ctx, args[1], message)
 	case "new-session":
 		if len(args) < 3 {
 			return false, a.writeln("usage: new-session <repo_path> <trust_tier>")
@@ -104,6 +139,26 @@ func (a *App) executeCommand(ctx context.Context, args []string) (bool, error) {
 			return false, a.writeln("usage: context <session_id> <turn_id>")
 		}
 		return false, a.handleContext(ctx, args[1], args[2])
+	case "policy":
+		return false, a.handlePolicy(ctx)
+	case "replay":
+		if len(args) < 2 {
+			return false, a.writeln("usage: replay <session_id> [event_type]")
+		}
+		eventType := ""
+		if len(args) > 2 {
+			eventType = args[2]
+		}
+		return false, a.handleReplay(ctx, args[1], eventType)
+	case "diff":
+		if len(args) < 2 {
+			return false, a.writeln("usage: diff <session_id> [event_type]")
+		}
+		eventType := ""
+		if len(args) > 2 {
+			eventType = args[2]
+		}
+		return false, a.handleReplay(ctx, args[1], eventType)
 	default:
 		return false, a.writeln("unknown command")
 	}
@@ -113,12 +168,18 @@ func (a *App) printHelp() error {
 	lines := []string{
 		"Commands:",
 		"  sessions",
+		"  start <repo_path> <trust_tier>",
+		"  ask <session_id> <message>",
+		"  diff <session_id> [event_type]",
 		"  new-session <repo_path> <trust_tier>",
 		"  turn <session_id> <message>",
 		"  approvals",
 		"  approve <approval_id>",
 		"  deny <approval_id> [reason]",
-		"  context <turn_id>",
+		"  context <session_id> <turn_id>",
+		"  policy",
+		"  replay <session_id> [event_type]",
+		"  stop",
 		"  quit",
 	}
 	for _, line := range lines {
@@ -172,11 +233,40 @@ func (a *App) handleApprovals(ctx context.Context) error {
 }
 
 func (a *App) handleDecision(ctx context.Context, approvalID, decision, reason string) error {
-	approval, err := a.api.DecideApproval(ctx, approvalID, DecideApprovalRequest{Decision: decision, Reason: reason})
+	approval, err := a.findPendingApproval(ctx, approvalID)
 	if err != nil {
 		return err
 	}
-	return a.writef("%s -> %s\n", approval.ID, approval.State)
+	if approval.ExpiresAt != "" {
+		expiresAt, parseErr := time.Parse(time.RFC3339, approval.ExpiresAt)
+		if parseErr == nil && time.Now().UTC().After(expiresAt) {
+			return fmt.Errorf("approval %s expired", approvalID)
+		}
+	}
+
+	decided, err := a.api.DecideApproval(ctx, approvalID, DecideApprovalRequest{Decision: decision, Reason: reason})
+	if err != nil {
+		return err
+	}
+	return a.writef("%s -> %s\n", decided.ID, decided.State)
+}
+
+func (a *App) findPendingApproval(ctx context.Context, approvalID string) (*Approval, error) {
+	approvals, err := a.api.ListApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, approval := range approvals {
+		if approval.ID != approvalID {
+			continue
+		}
+		if approval.State != "pending" {
+			return nil, fmt.Errorf("approval %s is in state %s", approvalID, approval.State)
+		}
+		copy := approval
+		return &copy, nil
+	}
+	return nil, errors.New("approval not found")
 }
 
 func (a *App) handleContext(ctx context.Context, sessionID, turnID string) error {
@@ -186,6 +276,31 @@ func (a *App) handleContext(ctx context.Context, sessionID, turnID string) error
 	}
 	for _, f := range fragments {
 		if err := a.writef("%s %s tokens=%d truncated=%t\n", f.SourceType, f.SourceRef, f.TokenCount, f.Truncated); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) handlePolicy(ctx context.Context) error {
+	policy, err := a.api.GetPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return err
+	}
+	return a.writef("%s\n", string(data))
+}
+
+func (a *App) handleReplay(ctx context.Context, sessionID, eventType string) error {
+	events, err := a.api.ListSessionEvents(ctx, sessionID, eventType)
+	if err != nil {
+		return err
+	}
+	for _, ev := range events {
+		if err := a.writef("%s %s %s\n", ev.Timestamp, ev.EventType, ev.Actor); err != nil {
 			return err
 		}
 	}

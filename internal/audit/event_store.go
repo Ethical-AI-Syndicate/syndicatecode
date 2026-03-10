@@ -230,7 +230,7 @@ func (s *EventStore) Append(ctx context.Context, event Event) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO events (id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload) 
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.ID, event.SessionID, event.TurnID, event.Timestamp.Format(time.RFC3339),
+		event.ID, event.SessionID, event.TurnID, event.Timestamp.Format(time.RFC3339Nano),
 		event.EventType, event.Actor, event.PolicyVersion, event.TrustTier, payload,
 	)
 	return err
@@ -238,8 +238,8 @@ func (s *EventStore) Append(ctx context.Context, event Event) error {
 
 func (s *EventStore) QueryBySession(ctx context.Context, sessionID string) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload 
-		 FROM events WHERE session_id = ? ORDER BY timestamp ASC`,
+		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload
+		 FROM events WHERE session_id = ? ORDER BY timestamp ASC, rowid ASC`,
 		sessionID,
 	)
 	if err != nil {
@@ -254,8 +254,8 @@ func (s *EventStore) QueryBySession(ctx context.Context, sessionID string) ([]Ev
 
 func (s *EventStore) QueryAll(ctx context.Context) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload 
-		 FROM events ORDER BY timestamp ASC`,
+		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload
+		 FROM events ORDER BY timestamp ASC, rowid ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -279,9 +279,12 @@ func (s *EventStore) scanRows(rows *sql.Rows) ([]Event, error) {
 			return nil, err
 		}
 
-		e.Timestamp, err = time.Parse(time.RFC3339, timestampStr)
+		e.Timestamp, err = time.Parse(time.RFC3339Nano, timestampStr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse event timestamp %q: %w", timestampStr, err)
+			e.Timestamp, err = time.Parse(time.RFC3339, timestampStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse event timestamp %q: %w", timestampStr, err)
+			}
 		}
 		e.Payload = payload
 		events = append(events, e)
