@@ -66,6 +66,26 @@ type toolExecuteResponse struct {
 	RedactionNotices []redactionNotice `json:"redaction_notices,omitempty"`
 }
 
+type exportReplayResponse struct {
+	SessionID      string            `json:"session_id"`
+	Destination    string            `json:"destination"`
+	Events         []exportEvent     `json:"events"`
+	Warnings       []redactionNotice `json:"warnings,omitempty"`
+	MaterialImpact bool              `json:"material_impact"`
+}
+
+type exportEvent struct {
+	ID            string                 `json:"event_id"`
+	SessionID     string                 `json:"session_id"`
+	TurnID        string                 `json:"turn_id,omitempty"`
+	Timestamp     time.Time              `json:"timestamp"`
+	EventType     string                 `json:"event_type"`
+	Actor         string                 `json:"actor"`
+	PolicyVersion string                 `json:"policy_version,omitempty"`
+	TrustTier     string                 `json:"trust_tier,omitempty"`
+	Payload       map[string]interface{} `json:"payload,omitempty"`
+}
+
 func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -351,6 +371,10 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		s.handleSessionEvents(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "export" {
+		s.handleSessionExport(w, r, parts[0])
+		return
+	}
 	if len(parts) != 1 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
@@ -398,6 +422,72 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, ses
 
 	if err := json.NewEncoder(w).Encode(events); err != nil {
 		log.Printf("failed to encode session events: %v", err)
+	}
+}
+
+func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request, sessionID string) {
+	destination := r.URL.Query().Get("destination")
+	if destination == "" {
+		destination = string(secrets.DestinationExport)
+	}
+	if destination != string(secrets.DestinationExport) {
+		http.Error(w, "destination must be export", http.StatusBadRequest)
+		return
+	}
+
+	events, err := s.eventStore.QueryBySession(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(events) == 0 {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	policy := secrets.NewPolicyExecutor(nil)
+	filteredEvents := make([]exportEvent, 0, len(events))
+	warnings := make([]redactionNotice, 0)
+	for idx, event := range events {
+		filteredEvent := exportEvent{
+			ID:            event.ID,
+			SessionID:     event.SessionID,
+			TurnID:        event.TurnID,
+			Timestamp:     event.Timestamp,
+			EventType:     event.EventType,
+			Actor:         event.Actor,
+			PolicyVersion: event.PolicyVersion,
+			TrustTier:     event.TrustTier,
+		}
+
+		if len(event.Payload) > 0 {
+			var payload map[string]interface{}
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				http.Error(w, "failed to decode event payload", http.StatusInternalServerError)
+				return
+			}
+			sanitizedPayload, payloadNotices := applyRedactionPolicyWithNotices(
+				policy,
+				fmt.Sprintf("events[%d].payload", idx),
+				"event_payload",
+				secrets.DestinationExport,
+				payload,
+			)
+			filteredEvent.Payload = sanitizedPayload
+			warnings = append(warnings, payloadNotices...)
+		}
+
+		filteredEvents = append(filteredEvents, filteredEvent)
+	}
+
+	if err := json.NewEncoder(w).Encode(exportReplayResponse{
+		SessionID:      sessionID,
+		Destination:    destination,
+		Events:         filteredEvents,
+		Warnings:       warnings,
+		MaterialImpact: hasMaterialImpact(warnings),
+	}); err != nil {
+		log.Printf("failed to encode session export: %v", err)
 	}
 }
 
