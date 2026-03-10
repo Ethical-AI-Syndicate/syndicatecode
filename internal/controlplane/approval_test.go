@@ -460,3 +460,11 @@ func TestHandleToolExecuteRecordsAuditSafeRedactionEvents(t *testing.T) {
 		t.Fatalf("expected tool_output_redaction event to be recorded")
 	}
 }
+
+// TestApprovalExecutionContextStored_Bead_l3d_8_4 is the bead-tagged conformance entry
+// point for l3d.8.4 (log execution context and surface in approval flow).
+func TestApprovalExecutionContextStored_Bead_l3d_8_4(t *testing.T) {
+	t.Parallel()
+	t.Run("execution context stored on propose", TestApprovalPropose_StoresExecutionContext)
+	t.Run("nil execution context accepted", TestApprovalPropose_NilContextIsAccepted)
+}

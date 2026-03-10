@@ -23,16 +23,18 @@ const (
 )
 
 var (
-	canonicalBeadRE    = regexp.MustCompile(`\bl3d\.[0-9]+(?:\.[0-9]+)*\b`)
-	malformedBeadRE    = regexp.MustCompile(`\b(?:bd[-.][0-9]+(?:[-.][0-9]+)*|l3d-[0-9]+(?:-[0-9]+)*)\b`)
-	testNameWithTagRE  = regexp.MustCompile(`^func\s+(Test[[:alnum:]_]*` + testTagPrefix + `[0-9_]+)\s*\(`)
-	goPackageFileRE    = regexp.MustCompile(`\.go$`)
-	goTestFileSuffixRE = regexp.MustCompile(`_test\.go$`)
+	canonicalBeadRE         = regexp.MustCompile(`\bl3d\.[0-9]+(?:\.[0-9]+)*\b`)
+	malformedBeadRE         = regexp.MustCompile(`\b(?:bd[-.][0-9]+(?:[-.][0-9]+)*|l3d-[0-9]+(?:-[0-9]+)*)\b`)
+	testNameWithTagRE       = regexp.MustCompile(`^func\s+(Test[[:alnum:]_]*` + testTagPrefix + `[0-9_]+)\s*\(`)
+	goPackageFileRE         = regexp.MustCompile(`\.go$`)
+	goTestFileSuffixRE      = regexp.MustCompile(`_test\.go$`)
+	changedFilesForCommitFn = changedFilesForCommit
 )
 
 type options struct {
 	strict      bool
 	verbose     bool
+	jsonOutput  bool
 	beadID      string
 	rangeSpec   string
 	title       string
@@ -111,6 +113,8 @@ func main() {
 		runErr = runGenerateEvidence(opts)
 	case "check-closure", "closure":
 		runErr = runCheckClosure(opts)
+	case "show":
+		runErr = runShow(opts)
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -128,10 +132,16 @@ func parseOptions(cmd string, args []string) (options, error) {
 		rangeSpec:   defaultRange,
 		evidenceDir: defaultEvidenceDir,
 	}
+	positionalBeadID := ""
+	if (cmd == "show" || cmd == "check-closure" || cmd == "closure" || cmd == "generate-evidence" || cmd == "evidence") && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		positionalBeadID = strings.TrimSpace(args[0])
+		args = args[1:]
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.BoolVar(&opts.strict, "strict", false, "treat warnings as errors")
 	fs.BoolVar(&opts.verbose, "v", false, "verbose output")
+	fs.BoolVar(&opts.jsonOutput, "json", false, "JSON output when supported")
 	fs.StringVar(&opts.rangeSpec, "range", defaultRange, "git commit range")
 	fs.StringVar(&opts.beadID, "bead", "", "canonical bead ID (l3d.X)")
 	fs.StringVar(&opts.title, "title", "", "PR title (optional)")
@@ -147,6 +157,12 @@ func parseOptions(cmd string, args []string) (options, error) {
 	}
 	if opts.description == "" {
 		opts.description = strings.TrimSpace(os.Getenv("CI_MERGE_REQUEST_DESCRIPTION"))
+	}
+	if opts.beadID == "" {
+		opts.beadID = positionalBeadID
+	}
+	if (cmd == "show" || cmd == "check-closure" || cmd == "closure" || cmd == "generate-evidence" || cmd == "evidence") && opts.beadID == "" && fs.NArg() > 0 {
+		opts.beadID = strings.TrimSpace(fs.Arg(0))
 	}
 
 	if cmd == "generate-evidence" || cmd == "evidence" || cmd == "check-closure" || cmd == "closure" {
@@ -169,6 +185,7 @@ Commands:
   verify-commits     Verify every commit subject in range has canonical bead ID
   verify-pr          Verify PR metadata includes bead and governance sections
   list-beads         List canonical bead IDs found in commit range
+  show               Show bead issue JSON from bd
   generate-evidence  Generate evidence artifact for a bead
   check-closure      Validate bead closure credibility from evidence
 
@@ -176,8 +193,30 @@ Examples:
   beads verify --range origin/master..HEAD --strict
   beads verify-commits --range HEAD~5..HEAD --strict
   beads verify-pr --title "$CI_MERGE_REQUEST_TITLE" --description "$CI_MERGE_REQUEST_DESCRIPTION" --strict
+  beads show l3d.1 --json
   beads generate-evidence --bead l3d.1 --range origin/master..HEAD --phase build=pass --phase test=pass
   beads check-closure --bead l3d.1`)
+}
+
+func runShow(opts options) error {
+	if !isCanonicalBeadID(opts.beadID) {
+		return fmt.Errorf("bead id must be canonical l3d.X format")
+	}
+	issueID := beadIssueID(opts.beadID)
+	out, err := runCmd("bd", "show", issueID, "--json")
+	if err != nil {
+		return err
+	}
+	if opts.jsonOutput {
+		fmt.Println(strings.TrimSpace(out))
+		return nil
+	}
+	status, statusErr := beadStatusFromBD(issueID)
+	if statusErr != nil {
+		return statusErr
+	}
+	fmt.Printf("%s %s\n", issueID, status)
+	return nil
 }
 
 func runVerify(opts options) error {
@@ -202,7 +241,11 @@ func runVerify(opts options) error {
 	goFiles, testFiles := splitGoFiles(changedFiles)
 
 	issues := validateChangedGoFiles(goFiles, testFiles)
-	issues = append(issues, validateTestBeadTags(beads, testFiles)...)
+	requiredBeads, reqErr := requiredBeadsForTagging(commits)
+	if reqErr != nil {
+		return reqErr
+	}
+	issues = append(issues, validateTestBeadTags(requiredBeads, testFiles)...)
 
 	if len(issues) > 0 {
 		for _, issue := range issues {
@@ -233,6 +276,9 @@ func runVerifyCommits(opts options) error {
 
 	var failures []string
 	for _, c := range commits {
+		if isExemptCommitSubject(c.Subject) {
+			continue
+		}
 		beads := parseCanonicalBeads(c.Subject)
 		malformed := parseMalformedBeads(c.Subject)
 		if len(beads) == 0 {
@@ -448,6 +494,10 @@ func validateChangedGoFiles(changedGoFiles, changedTestFiles []string) []string 
 		issues = append(issues, "changed Go source files detected but no changed *_test.go files")
 	}
 	for _, gf := range changedGoFiles {
+		// Skip files that were deleted in the range; they no longer need a sibling.
+		if _, err := os.Stat(gf); err != nil {
+			continue
+		}
 		expected := strings.TrimSuffix(gf, ".go") + "_test.go"
 		if _, err := os.Stat(expected); err != nil {
 			issues = append(issues, fmt.Sprintf("missing sibling test file for %s (expected %s)", gf, expected))
@@ -463,6 +513,10 @@ func validateTestBeadTags(beads, changedTestFiles []string) []string {
 	}
 	tagged := map[string]bool{}
 	for _, f := range changedTestFiles {
+		// Skip files that were deleted in the range; they carry no bead tags.
+		if _, err := os.Stat(f); err != nil {
+			continue
+		}
 		found, err := parseBeadTagsFromTestFile(f)
 		if err != nil {
 			issues = append(issues, fmt.Sprintf("failed reading test file %s: %v", f, err))
@@ -478,6 +532,35 @@ func validateTestBeadTags(beads, changedTestFiles []string) []string {
 		}
 	}
 	return issues
+}
+
+func requiredBeadsForTagging(commits []commitInfo) ([]string, error) {
+	beadSet := map[string]struct{}{}
+	for _, commit := range commits {
+		files, err := changedFilesForCommitFn(commit.SHA)
+		if err != nil {
+			return nil, err
+		}
+		requiresTag := false
+		for _, file := range files {
+			if goPackageFileRE.MatchString(file) && !goTestFileSuffixRE.MatchString(file) {
+				requiresTag = true
+				break
+			}
+		}
+		if !requiresTag {
+			continue
+		}
+		for _, bead := range commit.Beads {
+			beadSet[bead] = struct{}{}
+		}
+	}
+	beads := make([]string, 0, len(beadSet))
+	for bead := range beadSet {
+		beads = append(beads, bead)
+	}
+	sort.Strings(beads)
+	return beads, nil
 }
 
 func evaluateEvidence(e beadEvidence) evidenceSummary {
@@ -515,6 +598,11 @@ func parseCanonicalBeads(input string) []string {
 func parseMalformedBeads(input string) []string {
 	matches := malformedBeadRE.FindAllString(strings.ToLower(input), -1)
 	return dedupeSorted(matches)
+}
+
+func isExemptCommitSubject(subject string) bool {
+	trimmed := strings.TrimSpace(subject)
+	return strings.HasPrefix(trimmed, "Merge ")
 }
 
 func isCanonicalBeadID(id string) bool {
@@ -620,6 +708,27 @@ func collectCommits(rangeSpec string) ([]commitInfo, error) {
 		})
 	}
 	return commits, nil
+}
+
+func changedFilesForCommit(sha string) ([]string, error) {
+	out, err := runCmd("git", "show", "--name-only", "--format=", sha)
+	if err != nil {
+		return nil, fmt.Errorf("git show failed for commit %s: %w", sha, err)
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return nil, nil
+	}
+	rows := strings.Split(out, "\n")
+	files := make([]string, 0, len(rows))
+	for _, row := range rows {
+		trimmed := strings.TrimSpace(row)
+		if trimmed == "" {
+			continue
+		}
+		files = append(files, trimmed)
+	}
+	return files, nil
 }
 
 func uniqueBeadsFromCommits(commits []commitInfo) []string {

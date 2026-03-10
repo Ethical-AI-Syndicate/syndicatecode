@@ -371,3 +371,21 @@ func schemaObjectExists(t *testing.T, store *EventStore, objectType, name string
 
 	return exists == 1
 }
+
+// TestArtifactStorageLifecycle_Bead_l3d_3_2 is the bead-tagged conformance entry point
+// for l3d.3.2 (artifact reference storage strategy).
+func TestArtifactStorageLifecycle_Bead_l3d_3_2(t *testing.T) {
+	t.Parallel()
+	t.Run("store and get artifact", TestEventStore_StoreAndGetArtifact)
+	t.Run("get artifact not found", TestEventStore_GetArtifactNotFound)
+	t.Run("list artifacts by session", TestEventStore_ListArtifactsBySession)
+	t.Run("store artifact hash integrity", TestEventStore_StoreArtifactHashIntegrity)
+}
+
+// TestRetentionCleanup_Bead_l3d_3_4 is the bead-tagged conformance entry point
+// for l3d.3.4 (retention cleanup for rows and artifact files).
+func TestRetentionCleanup_Bead_l3d_3_4(t *testing.T) {
+	t.Parallel()
+	t.Run("cleanup expired deletes artifacts and emits event", TestEventStore_CleanupExpiredDeletesArtifactsAndEmitsEvent)
+	t.Run("cleanup expired is idempotent", TestEventStore_CleanupExpiredIsIdempotent)
+}
