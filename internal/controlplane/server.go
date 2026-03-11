@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +20,7 @@ import (
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/policy"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/requestmeta"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/sandbox"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/secrets"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
@@ -28,6 +31,8 @@ import (
 
 type Config struct {
 	Addr               string
+	DBPath             string
+	APIToken           string
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
 	ProviderPolicyPath string
@@ -36,6 +41,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Addr:               ":7777",
+		DBPath:             "syndicatecode.db",
 		ReadTimeout:        30 * time.Second,
 		WriteTimeout:       30 * time.Second,
 		ProviderPolicyPath: "",
@@ -43,20 +49,33 @@ func DefaultConfig() *Config {
 }
 
 type Server struct {
-	httpServer   *http.Server
-	sessionMgr   *session.Manager
-	turnMgr      *ctxmgr.TurnManager
-	ctxManifest  *ctxmgr.ContextManifest
-	eventStore   *audit.EventStore
-	approvalMgr  *ApprovalManager
-	toolRegistry *tools.Registry
-	toolExecutor *tools.Executor
+	httpServer     *http.Server
+	authToken      string
+	metrics        *runtimeMetrics
+	providerPolicy policy.ProviderPolicy
+	routeEngine    *policy.RouteEngine
+	sessionMgr     *session.Manager
+	turnMgr        *ctxmgr.TurnManager
+	ctxManifest    *ctxmgr.ContextManifest
+	eventStore     *audit.EventStore
+	approvalMgr    *ApprovalManager
+	toolRegistry   *tools.Registry
+	toolExecutor   *tools.Executor
 }
+
+const (
+	roleViewer   = "viewer"
+	roleOperator = "operator"
+)
 
 const redactionAuditSessionID = "system:redaction"
 const approvalAuditSessionID = "system:approval"
 const eventStreamPollInterval = 200 * time.Millisecond
 const retentionCleanupInterval = time.Minute
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
+
+var sessionIDPattern = regexp.MustCompile(`/api/v1/sessions/([^/]+)`)
+var sessionTurnIDPattern = regexp.MustCompile(`/api/v1/sessions/[^/]+/turns/([^/]+)`)
 
 type redactionNotice struct {
 	Path           string `json:"path"`
@@ -73,20 +92,108 @@ type toolExecuteResponse struct {
 	RedactionNotices []redactionNotice `json:"redaction_notices,omitempty"`
 }
 
+type runtimeMetrics struct {
+	mu                sync.Mutex
+	startedAt         time.Time
+	totalRequests     int64
+	statusCounts      map[int]int64
+	endpointCounts    map[string]int64
+	toolExecutionBySE map[string]int64
+}
+
+func newRuntimeMetrics(now time.Time) *runtimeMetrics {
+	return &runtimeMetrics{
+		startedAt:         now.UTC(),
+		statusCounts:      map[int]int64{},
+		endpointCounts:    map[string]int64{},
+		toolExecutionBySE: map[string]int64{},
+	}
+}
+
+func (m *runtimeMetrics) recordRequest(path string, status int) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.totalRequests++
+	m.statusCounts[status]++
+	m.endpointCounts[path]++
+}
+
+func (m *runtimeMetrics) recordToolExecution(sideEffect tools.SideEffect) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.toolExecutionBySE[string(sideEffect)]++
+}
+
+func (m *runtimeMetrics) snapshot(toolsRegistered int) map[string]interface{} {
+	if m == nil {
+		return map[string]interface{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	statusCounts := make(map[string]int64, len(m.statusCounts))
+	for code, count := range m.statusCounts {
+		statusCounts[fmt.Sprintf("%d", code)] = count
+	}
+
+	endpointCounts := make(map[string]int64, len(m.endpointCounts))
+	for path, count := range m.endpointCounts {
+		endpointCounts[path] = count
+	}
+
+	toolCounts := make(map[string]int64, len(m.toolExecutionBySE))
+	for sideEffect, count := range m.toolExecutionBySE {
+		toolCounts[sideEffect] = count
+	}
+
+	return map[string]interface{}{
+		"started_at":              m.startedAt.Format(time.RFC3339Nano),
+		"uptime_seconds":          int64(time.Since(m.startedAt).Seconds()),
+		"total_requests":          m.totalRequests,
+		"status_counts":           statusCounts,
+		"endpoint_counts":         endpointCounts,
+		"tool_executions_by_side": toolCounts,
+		"tools_registered":        toolsRegistered,
+	}
+}
+
+type telemetryResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *telemetryResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
 func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
 
+	providerPolicy := policy.DefaultProviderPolicy()
 	if cfg.ProviderPolicyPath != "" {
-		if _, err := policy.LoadProviderPolicy(cfg.ProviderPolicyPath); err != nil {
+		loadedPolicy, err := policy.LoadProviderPolicy(cfg.ProviderPolicyPath)
+		if err != nil {
 			return nil, fmt.Errorf("failed to load provider policy: %w", err)
 		}
-	} else if err := policy.DefaultProviderPolicy().Validate(); err != nil {
+		providerPolicy = loadedPolicy
+	} else if err := providerPolicy.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid default provider policy: %w", err)
 	}
 
-	eventStore, err := audit.NewEventStore("syndicatecode.db")
+	dbPath := cfg.DBPath
+	if dbPath == "" {
+		dbPath = "syndicatecode.db"
+	}
+	eventStore, err := audit.NewEventStore(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event store: %w", err)
 	}
@@ -95,7 +202,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	turnMgr := ctxmgr.NewTurnManagerWithPolicy(eventStore, sessionMgr, newContextRedactionPolicy(secrets.NewPolicyExecutor(nil)))
 	ctxManifest := ctxmgr.NewContextManifest(eventStore)
 
-	toolRegistry, toolExecutor, err := initializeTooling(ctx, eventStore)
+	toolRegistry, toolExecutor, err := initializeTooling(ctx, eventStore, sessionMgr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize tooling: %w", err)
 	}
@@ -105,18 +212,23 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	mux := http.NewServeMux()
 	server := &Server{
 		httpServer: &http.Server{
-			Addr:         cfg.Addr,
-			Handler:      mux,
-			ReadTimeout:  cfg.ReadTimeout,
-			WriteTimeout: cfg.WriteTimeout,
+			Addr:           cfg.Addr,
+			Handler:        nil,
+			ReadTimeout:    cfg.ReadTimeout,
+			WriteTimeout:   cfg.WriteTimeout,
+			MaxHeaderBytes: 1 << 16, // 64 KiB
 		},
-		sessionMgr:   sessionMgr,
-		turnMgr:      turnMgr,
-		ctxManifest:  ctxManifest,
-		eventStore:   eventStore,
-		approvalMgr:  approvalMgr,
-		toolRegistry: toolRegistry,
-		toolExecutor: toolExecutor,
+		authToken:      cfg.APIToken,
+		metrics:        newRuntimeMetrics(time.Now().UTC()),
+		providerPolicy: providerPolicy,
+		routeEngine:    buildRouteEngine(providerPolicy),
+		sessionMgr:     sessionMgr,
+		turnMgr:        turnMgr,
+		ctxManifest:    ctxManifest,
+		eventStore:     eventStore,
+		approvalMgr:    approvalMgr,
+		toolRegistry:   toolRegistry,
+		toolExecutor:   toolExecutor,
 	}
 
 	if err := server.restoreRuntimeState(ctx); err != nil {
@@ -126,6 +238,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	server.startRetentionCleanupScheduler(ctx, retentionCleanupInterval)
 
 	server.registerRoutes(mux)
+	server.httpServer.Handler = server.withTelemetry(mux)
 
 	return server, nil
 }
@@ -160,7 +273,46 @@ func (s *Server) runRetentionCleanupPass(ctx context.Context, now time.Time) err
 	return err
 }
 
-func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tools.Registry, *tools.Executor, error) {
+type auditExecutionRecorder struct {
+	store *audit.EventStore
+}
+
+func (r *auditExecutionRecorder) BeforeExecute(ctx context.Context, call tools.ToolCall, _ tools.ToolDefinition) {
+	payload, _ := json.Marshal(map[string]string{"tool_name": call.ToolName, "call_id": call.ID})
+	_ = r.store.Append(ctx, audit.Event{
+		ID:        uuid.New().String(),
+		SessionID: call.SessionID,
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventToolInvoked,
+		Actor:     requestmeta.Actor(ctx),
+		Payload:   payload,
+	})
+}
+
+func (r *auditExecutionRecorder) AfterExecute(ctx context.Context, call tools.ToolCall, _ tools.ToolDefinition, result *tools.ToolResult, execErr error, duration time.Duration) {
+	success := execErr == nil && result != nil && result.Success
+	if recErr := r.store.RecordToolInvocation(ctx, audit.ToolInvocationRecord{
+		ID:         uuid.New().String(),
+		SessionID:  call.SessionID,
+		ToolName:   call.ToolName,
+		Success:    success,
+		DurationMS: duration.Milliseconds(),
+		CreatedAt:  time.Now().UTC(),
+	}); recErr != nil {
+		log.Printf("failed to record tool invocation: %v", recErr)
+	}
+	payload, _ := json.Marshal(map[string]string{"tool_name": call.ToolName, "success": fmt.Sprintf("%v", success)})
+	_ = r.store.Append(ctx, audit.Event{
+		ID:        uuid.New().String(),
+		SessionID: call.SessionID,
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventToolResult,
+		Actor:     requestmeta.Actor(ctx),
+		Payload:   payload,
+	})
+}
+
+func initializeTooling(ctx context.Context, eventStore *audit.EventStore, sessionMgr *session.Manager) (*tools.Registry, *tools.Executor, error) {
 	registry := tools.NewRegistry()
 
 	definitions := []tools.ToolDefinition{
@@ -281,6 +433,9 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 	}
 
 	executor := tools.NewExecutor(registry, nil)
+	if eventStore != nil {
+		executor.SetRecorder(&auditExecutionRecorder{store: eventStore})
+	}
 	repoRoot, err := os.Getwd()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to determine working directory: %w", err)
@@ -301,41 +456,397 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore) (*tool
 		MaxOutputBytes: 1024 * 1024,
 	})
 
+	commandExecutor := sandbox.NewMemoryBoundedExecutor(
+		sandbox.NewLimitedExecutor(
+			sandbox.NewSymbolicCommandExecutor(sandbox.DefaultSymbolicCommands()),
+		),
+		2,
+	)
+
+	allowedEnv := []string{"PATH", "HOME", "TERM", "GOCACHE", "GOMODCACHE", "GOROOT", "GOPATH"}
+	l1Runner := sandbox.NewL1Runner(repoRoot, allowedEnv, commandExecutor)
+	l2Runner := sandbox.NewL2Runner(repoRoot, allowedEnv, commandExecutor)
+
 	executor.RegisterHandler("echo", tools.EchoHandler())
 	executor.RegisterHandler("read_file", tools.ReadFileHandler(repoRoot))
 	executor.RegisterHandler("write_file", tools.WriteFileHandler(repoRoot))
 	executor.RegisterHandler("run_tests", sandbox.RunTestsHandler(runner))
 	executor.RegisterHandler("run_lint", sandbox.RunLintHandler(runner))
-	executor.RegisterHandler("restricted_shell", sandbox.RestrictedShellHandler(runner))
-	executor.RegisterHandler("apply_patch", tools.ApplyPatchHandler(patch.NewEngine(repoRoot)))
+	executor.RegisterHandler("restricted_shell", sandbox.RestrictedShellByTrustHandler(
+		func(handlerCtx context.Context, sessionID string) (string, error) {
+			sess, err := sessionMgr.Get(handlerCtx, sessionID)
+			if err != nil {
+				return "", err
+			}
+			return sess.TrustTier, nil
+		},
+		l1Runner,
+		l2Runner,
+	))
+	executor.RegisterHandler("apply_patch", tools.ApplyPatchHandler(
+		patch.NewEngine(repoRoot),
+		func(ctx context.Context, path, mutationType, beforeHash, afterHash string) {
+			if eventStore == nil {
+				return
+			}
+			if err := eventStore.RecordFileMutation(ctx, audit.FileMutationRecord{
+				ID:           uuid.New().String(),
+				Path:         path,
+				MutationType: mutationType,
+				BeforeHash:   beforeHash,
+				AfterHash:    afterHash,
+				AppliedAt:    time.Now().UTC(),
+			}); err != nil {
+				log.Printf("failed to record file mutation: %v", err)
+			}
+			payload, _ := json.Marshal(map[string]string{"path": path, "type": mutationType})
+			_ = eventStore.Append(ctx, audit.Event{
+				ID:        uuid.New().String(),
+				Timestamp: time.Now().UTC(),
+				EventType: audit.EventFileMutation,
+				Payload:   payload,
+			})
+		},
+	))
 
 	return registry, executor, nil
 }
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/health", s.handleHealth)
-	mux.Handle("/api/v1/sessions", schemaValidationMiddleware(
+	mux.Handle("/api/v1/health", schemaValidationMiddleware(
+		nil,
+		map[string]jsonObjectSchema{http.MethodGet: healthResponseSchema()},
+		http.HandlerFunc(s.handleHealth),
+	))
+	mux.Handle("/api/v1/readiness", schemaValidationMiddleware(
+		nil,
+		map[string]jsonObjectSchema{http.MethodGet: readinessResponseSchema()},
+		http.HandlerFunc(s.handleReadiness),
+	))
+	mux.Handle("/api/v1/metrics", s.withAuth(schemaValidationMiddleware(
+		nil,
+		map[string]jsonObjectSchema{http.MethodGet: metricsResponseSchema()},
+		http.HandlerFunc(s.handleMetrics),
+	)))
+	mux.Handle("/api/v1/sessions", s.withAuth(schemaValidationMiddleware(
 		map[string]jsonObjectSchema{http.MethodPost: sessionsCreateRequestSchema()},
 		map[string]jsonObjectSchema{http.MethodPost: sessionsCreateResponseSchema()},
 		http.HandlerFunc(s.handleSessions),
-	))
-	mux.HandleFunc("/api/v1/sessions/", s.handleSessionOrTurn)
-	mux.HandleFunc("/api/v1/turns", s.handleTurns)
-	mux.HandleFunc("/api/v1/turns/", s.handleTurnByID)
-	mux.HandleFunc("/api/v1/approvals", s.handleApprovals)
-	mux.HandleFunc("/api/v1/approvals/", s.handleApprovalByID)
-	mux.HandleFunc("/api/v1/policy", s.handlePolicy)
-	mux.HandleFunc("/api/v1/events/stream", s.handleEventStream)
-	mux.HandleFunc("/api/v1/tools/execute", s.handleToolExecute)
+	)))
+	mux.Handle("/api/v1/sessions/", s.withAuth(schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: sessionTurnsCreateRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: turnsCreateResponseSchema()},
+		http.HandlerFunc(s.handleSessionOrTurn),
+	)))
+	mux.Handle("/api/v1/turns", s.withAuth(schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: turnsCreateRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: turnsCreateResponseSchema()},
+		http.HandlerFunc(s.handleTurns),
+	)))
+	mux.Handle("/api/v1/turns/", s.withAuth(http.HandlerFunc(s.handleTurnByID)))
+	mux.Handle("/api/v1/approvals", s.withAuth(http.HandlerFunc(s.handleApprovals)))
+	mux.Handle("/api/v1/approvals/", s.withAuth(schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: approvalsDecisionRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: approvalsDecisionResponseSchema()},
+		http.HandlerFunc(s.handleApprovalByID),
+	)))
+	mux.Handle("/api/v1/policy", s.withAuth(schemaValidationMiddleware(
+		nil,
+		map[string]jsonObjectSchema{http.MethodGet: policyResponseSchema()},
+		http.HandlerFunc(s.handlePolicy),
+	)))
+	mux.Handle("/api/v1/events/stream", s.withAuth(http.HandlerFunc(s.handleEventStream)))
+	mux.Handle("/api/v1/tools", s.withAuth(schemaValidationMiddleware(
+		nil,
+		map[string]jsonObjectSchema{http.MethodGet: toolsListResponseSchema()},
+		http.HandlerFunc(s.handleTools),
+	)))
+	mux.Handle("/api/v1/tools/execute", s.withAuth(schemaValidationMiddlewareWithStatus(
+		map[string]jsonObjectSchema{http.MethodPost: toolsExecuteRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: toolsExecuteResponseSchema()},
+		responseSchemaByStatus{http.MethodPost: {http.StatusAccepted: approvalRecordSchema()}},
+		http.HandlerFunc(s.handleToolExecute),
+	)))
+}
+
+func (s *Server) handleTools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if s.toolRegistry == nil {
+		writeStatusError(w, http.StatusInternalServerError, "tool registry unavailable")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{"tools": s.toolRegistry.List()}); err != nil {
+		log.Printf("failed to encode tools response: %v", err)
+	}
+}
+
+func (s *Server) withTelemetry(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		tw := &telemetryResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+		next.ServeHTTP(tw, r)
+
+		statusCode := tw.statusCode
+		s.metrics.recordRequest(r.URL.Path, statusCode)
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = "n/a"
+		}
+		log.Printf("event=request method=%s path=%s status=%d duration_ms=%d actor=%s role=%s request_id=%s", r.Method, r.URL.Path, statusCode, time.Since(start).Milliseconds(), requestActor(r.Context()), requestRole(r.Context()), requestID)
+	})
+}
+
+func (s *Server) withAuth(next http.Handler) http.Handler {
+	if strings.TrimSpace(s.authToken) == "" {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+		if !strings.HasPrefix(authorization, "Bearer ") {
+			s.writeUnauthorized(w)
+			return
+		}
+
+		token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
+			s.writeUnauthorized(w)
+			return
+		}
+
+		role := normalizedRole(r.Header.Get("X-Syndicate-Role"))
+		if role == "" {
+			writeStatusError(w, http.StatusForbidden, "invalid role")
+			return
+		}
+		actor := strings.TrimSpace(r.Header.Get("X-Syndicate-Actor"))
+		if actor == "" {
+			actor = "api-client"
+		}
+
+		ctx := requestmeta.WithActor(r.Context(), actor)
+		ctx = requestmeta.WithRole(ctx, role)
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func normalizedRole(value string) string {
+	role := strings.ToLower(strings.TrimSpace(value))
+	switch role {
+	case "", roleOperator:
+		return roleOperator
+	case roleViewer:
+		return roleViewer
+	default:
+		return ""
+	}
+}
+
+func requestActor(ctx context.Context) string {
+	return requestmeta.Actor(ctx)
+}
+
+func requestRole(ctx context.Context) string {
+	return requestmeta.Role(ctx)
+}
+
+func requireOperatorRole(w http.ResponseWriter, r *http.Request) bool {
+	if requestRole(r.Context()) != roleOperator {
+		writeStatusError(w, http.StatusForbidden, "operator role required")
+		return false
+	}
+	return true
+}
+
+func (s *Server) enforceTrustTierToolPolicy(ctx context.Context, sessionID string, toolDef tools.ToolDefinition) error {
+	if requestRole(ctx) == roleViewer && toolDef.SideEffect != tools.SideEffectRead && toolDef.SideEffect != tools.SideEffectNone {
+		return fmt.Errorf("policy denied: viewer role can only execute read-only tools")
+	}
+
+	if sessionID == "" || s.sessionMgr == nil {
+		return nil
+	}
+
+	sess, err := s.sessionMgr.Get(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve session trust tier: %w", err)
+	}
+
+	engine := policy.NewEngine()
+	engine.AddRule(policy.Rule{
+		Name:        "viewer_no_mutations",
+		Description: "viewer role can only execute read-only tools",
+		Effect:      policy.EffectDeny,
+		Condition: func(ec *policy.EvaluationContext) bool {
+			role, _ := ec.Input["role"].(string)
+			if role != roleViewer {
+				return false
+			}
+			return ec.ToolSideEffect != policy.SideEffectRead && ec.ToolSideEffect != policy.SideEffectNone
+		},
+	})
+	engine.AddRule(policy.Rule{
+		Name:        "tier0_no_mutations",
+		Description: "tier0 cannot execute write/execute/network tools",
+		Effect:      policy.EffectDeny,
+		Condition: func(ec *policy.EvaluationContext) bool {
+			tier, _ := ec.Input["trust_tier"].(string)
+			if tier != "tier0" {
+				return false
+			}
+			return ec.ToolSideEffect == policy.SideEffectWrite || ec.ToolSideEffect == policy.SideEffectExecute || ec.ToolSideEffect == policy.SideEffectNetwork
+		},
+	})
+	engine.AddRule(policy.Rule{
+		Name:        "tier3_no_plugins",
+		Description: "tier3 cannot execute plugin tools",
+		Effect:      policy.EffectDeny,
+		Condition: func(ec *policy.EvaluationContext) bool {
+			tier, _ := ec.Input["trust_tier"].(string)
+			source, _ := ec.Input["tool_source"].(string)
+			return tier == "tier3" && source == tools.ToolSourcePlugin
+		},
+	})
+	engine.AddRule(policy.Rule{
+		Name:        "tier3_no_exec_or_network",
+		Description: "tier3 cannot execute shell or network tools",
+		Effect:      policy.EffectDeny,
+		Condition: func(ec *policy.EvaluationContext) bool {
+			tier, _ := ec.Input["trust_tier"].(string)
+			if tier != "tier3" {
+				return false
+			}
+			return ec.ToolSideEffect == policy.SideEffectExecute || ec.ToolSideEffect == policy.SideEffectNetwork
+		},
+	})
+
+	eval := engine.Evaluate(&policy.EvaluationContext{
+		ToolName:       toolDef.Name,
+		ToolSideEffect: mapToolSideEffect(toolDef.SideEffect),
+		Input: map[string]interface{}{
+			"trust_tier":  sess.TrustTier,
+			"tool_source": toolDef.Source,
+			"role":        requestRole(ctx),
+		},
+		Session: sessionID,
+		User:    requestActor(ctx),
+	})
+
+	if !eval.Allowed {
+		return fmt.Errorf("policy denied: %s", eval.Reason)
+	}
+
+	return nil
+}
+
+func mapToolSideEffect(effect tools.SideEffect) policy.SideEffect {
+	switch effect {
+	case tools.SideEffectRead:
+		return policy.SideEffectRead
+	case tools.SideEffectWrite:
+		return policy.SideEffectWrite
+	case tools.SideEffectExecute:
+		return policy.SideEffectExecute
+	case tools.SideEffectNetwork:
+		return policy.SideEffectNetwork
+	default:
+		return policy.SideEffectNone
+	}
+}
+
+func (s *Server) writeUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Bearer realm="syndicatecode"`)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	if err := json.NewEncoder(w).Encode(ErrorEnvelope{Type: "unauthorized", Reason: "missing or invalid bearer token", Retryable: false}); err != nil {
+		log.Printf("failed to encode unauthorized response: %v", err)
+	}
+}
+
+func writeStatusError(w http.ResponseWriter, status int, reason string) {
+	WriteError(w, status, errors.New(reason))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
 		log.Printf("failed to encode health response: %v", err)
+	}
+}
+
+func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	status := "ready"
+	db := "ok"
+	schemaVersion := 0
+	schemaStatus := "ok"
+	if s.eventStore == nil {
+		status = "degraded"
+		db = "unavailable"
+		schemaStatus = "unavailable"
+	} else {
+		if err := s.eventStore.Ping(r.Context()); err != nil {
+			status = "degraded"
+			db = "unreachable"
+			schemaStatus = "unavailable"
+		}
+		if version, err := s.eventStore.SchemaVersion(); err == nil {
+			schemaVersion = version
+		} else {
+			status = "degraded"
+			schemaStatus = "unavailable"
+		}
+	}
+	toolsRegistered := 0
+	if s.toolRegistry != nil {
+		toolsRegistered = len(s.toolRegistry.List())
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":           status,
+		"db":               db,
+		"schema_version":   schemaVersion,
+		"schema_status":    schemaStatus,
+		"tools_registered": toolsRegistered,
+	}); err != nil {
+		log.Printf("failed to encode readiness response: %v", err)
+	}
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !requireOperatorRole(w, r) {
+		return
+	}
+
+	toolsRegistered := 0
+	if s.toolRegistry != nil {
+		toolsRegistered = len(s.toolRegistry.List())
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(s.metrics.snapshot(toolsRegistered)); err != nil {
+		log.Printf("failed to encode metrics response: %v", err)
 	}
 }
 
@@ -346,14 +857,14 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createSession(w, r)
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.sessionMgr.List(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := json.NewEncoder(w).Encode(sessions); err != nil {
@@ -362,18 +873,22 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
+	if !requireOperatorRole(w, r) {
+		return
+	}
+
 	var req struct {
 		RepoPath  string `json:"repo_path"`
 		TrustTier string `json:"trust_tier"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	created, err := s.sessionMgr.Create(r.Context(), req.RepoPath, req.TrustTier)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -402,7 +917,7 @@ func (s *Server) handleSessionOrTurn(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -420,7 +935,7 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	sessionID := parts[0]
 	session, err := s.sessionMgr.Get(r.Context(), sessionID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStatusError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if err := json.NewEncoder(w).Encode(session); err != nil {
@@ -431,18 +946,18 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if s.sessionMgr != nil {
 		if _, err := s.sessionMgr.Get(r.Context(), sessionID); err != nil {
-			http.Error(w, "session not found", http.StatusNotFound)
+			writeStatusError(w, http.StatusNotFound, "session not found")
 			return
 		}
 	}
 
 	events, err := s.eventStore.QueryBySession(r.Context(), sessionID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if s.sessionMgr == nil && len(events) == 0 {
-		http.Error(w, "session not found", http.StatusNotFound)
+		writeStatusError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
@@ -476,20 +991,20 @@ func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createTurn(w, r)
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (s *Server) listTurns(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session_id")
 	if sessionID == "" {
-		http.Error(w, "session_id required", http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, "session_id required")
 		return
 	}
 
 	turns, err := s.turnMgr.ListBySession(r.Context(), sessionID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := json.NewEncoder(w).Encode(turns); err != nil {
@@ -498,22 +1013,25 @@ func (s *Server) listTurns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createTurn(w http.ResponseWriter, r *http.Request) {
+	if !requireOperatorRole(w, r) {
+		return
+	}
+
 	var req struct {
 		SessionID string `json:"session_id"`
 		Message   string `json:"message"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
 	turn, err := s.turnMgr.Create(r.Context(), req.SessionID, req.Message)
 	if err != nil {
 		if errors.Is(err, ctxmgr.ErrActiveMutableTurnConflict) {
-			http.Error(w, err.Error(), http.StatusConflict)
+			writeStatusError(w, http.StatusConflict, err.Error())
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -535,7 +1053,7 @@ func (s *Server) handleTurnByID(w http.ResponseWriter, r *http.Request) {
 	turnID := path
 	turn, err := s.turnMgr.Get(r.Context(), turnID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStatusError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if err := json.NewEncoder(w).Encode(turn); err != nil {
@@ -546,14 +1064,14 @@ func (s *Server) handleTurnByID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTurnContext(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/turns/"), "/")
 	if len(parts) < 2 {
-		http.Error(w, "turn_id required", http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, "turn_id required")
 		return
 	}
 	turnID := parts[0]
 
 	fragments, err := s.ctxManifest.Get(r.Context(), turnID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := json.NewEncoder(w).Encode(fragments); err != nil {
@@ -564,7 +1082,7 @@ func (s *Server) handleTurnContext(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessionTurns(w http.ResponseWriter, r *http.Request) {
 	sessionID := extractSessionID(r.URL.Path)
 	if sessionID == "" {
-		http.Error(w, "session_id required", http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, "session_id required")
 		return
 	}
 
@@ -574,20 +1092,18 @@ func (s *Server) handleSessionTurns(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createSessionTurn(w, r, sessionID)
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (s *Server) listSessionTurns(w http.ResponseWriter, r *http.Request, sessionID string) {
-	_, err := s.sessionMgr.Get(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	if !s.requireSession(w, r, sessionID) {
 		return
 	}
 
 	turns, err := s.turnMgr.ListBySession(r.Context(), sessionID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := json.NewEncoder(w).Encode(turns); err != nil {
@@ -596,9 +1112,11 @@ func (s *Server) listSessionTurns(w http.ResponseWriter, r *http.Request, sessio
 }
 
 func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessionID string) {
-	_, err := s.sessionMgr.Get(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	if !requireOperatorRole(w, r) {
+		return
+	}
+
+	if !s.requireSession(w, r, sessionID) {
 		return
 	}
 
@@ -606,19 +1124,18 @@ func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessi
 		Message string   `json:"message"`
 		Files   []string `json:"files,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
 	if req.Message == "" {
-		http.Error(w, "message is required", http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, "message is required")
 		return
 	}
 
 	turn, err := s.turnMgr.Create(r.Context(), sessionID, req.Message)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -629,12 +1146,21 @@ func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessi
 	}
 }
 
+func (s *Server) requireSession(w http.ResponseWriter, r *http.Request, sessionID string) bool {
+	if _, err := s.sessionMgr.Get(r.Context(), sessionID); err != nil {
+		writeStatusError(w, http.StatusNotFound, err.Error())
+		return false
+	}
+
+	return true
+}
+
 func (s *Server) handleSessionTurnByID(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
-	sessionIDMatch := regexp.MustCompile(`/api/v1/sessions/([^/]+)`).FindStringSubmatch(path)
+	sessionIDMatch := sessionIDPattern.FindStringSubmatch(path)
 	if sessionIDMatch == nil {
-		http.Error(w, "session_id required", http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, "session_id required")
 		return
 	}
 	sessionID := sessionIDMatch[1]
@@ -644,20 +1170,8 @@ func (s *Server) handleSessionTurnByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	turnIDMatch := regexp.MustCompile(`/api/v1/sessions/[^/]+/turns/([^/]+)`).FindStringSubmatch(path)
-	if turnIDMatch == nil {
-		http.Error(w, "turn_id required", http.StatusBadRequest)
-		return
-	}
-	turnID := turnIDMatch[1]
-
-	turn, err := s.turnMgr.Get(r.Context(), turnID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	if turn.SessionID != sessionID {
-		http.Error(w, "turn does not belong to session", http.StatusNotFound)
+	_, turn, ok := s.loadSessionTurn(w, r, sessionID)
+	if !ok {
 		return
 	}
 	if err := json.NewEncoder(w).Encode(turn); err != nil {
@@ -666,36 +1180,40 @@ func (s *Server) handleSessionTurnByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSessionTurnContext(w http.ResponseWriter, r *http.Request, sessionID string) {
-	pathParts := strings.Split(r.URL.Path, "/")
-	for i, part := range pathParts {
-		if part == "turns" && i+1 < len(pathParts) {
-			turnID := pathParts[i+1]
-			if strings.Contains(turnID, "/context") {
-				turnID = strings.TrimSuffix(turnID, "/context")
-			}
-
-			turn, err := s.turnMgr.Get(r.Context(), turnID)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusNotFound)
-				return
-			}
-			if turn.SessionID != sessionID {
-				http.Error(w, "turn does not belong to session", http.StatusNotFound)
-				return
-			}
-
-			fragments, err := s.ctxManifest.Get(r.Context(), turnID)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if err := json.NewEncoder(w).Encode(fragments); err != nil {
-				log.Printf("failed to encode fragments: %v", err)
-			}
-			return
-		}
+	turnID, _, ok := s.loadSessionTurn(w, r, sessionID)
+	if !ok {
+		return
 	}
-	http.Error(w, "turn_id required", http.StatusBadRequest)
+
+	fragments, err := s.ctxManifest.Get(r.Context(), turnID)
+	if err != nil {
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := json.NewEncoder(w).Encode(fragments); err != nil {
+		log.Printf("failed to encode fragments: %v", err)
+	}
+}
+
+func (s *Server) loadSessionTurn(w http.ResponseWriter, r *http.Request, sessionID string) (string, *ctxmgr.Turn, bool) {
+	turnIDMatch := sessionTurnIDPattern.FindStringSubmatch(r.URL.Path)
+	if turnIDMatch == nil {
+		writeStatusError(w, http.StatusBadRequest, "turn_id required")
+		return "", nil, false
+	}
+	turnID := turnIDMatch[1]
+
+	turn, err := s.turnMgr.Get(r.Context(), turnID)
+	if err != nil {
+		writeStatusError(w, http.StatusNotFound, err.Error())
+		return "", nil, false
+	}
+	if turn.SessionID != sessionID {
+		writeStatusError(w, http.StatusNotFound, "turn does not belong to session")
+		return "", nil, false
+	}
+
+	return turnID, turn, true
 }
 
 func extractSessionID(path string) string {
@@ -708,7 +1226,7 @@ func extractSessionID(path string) string {
 
 func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	sessionID := r.URL.Query().Get("session_id")
@@ -720,12 +1238,15 @@ func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !requireOperatorRole(w, r) {
 		return
 	}
 	approvalID := strings.TrimPrefix(r.URL.Path, "/api/v1/approvals/")
 	if approvalID == "" {
-		http.Error(w, "approval_id required", http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, "approval_id required")
 		return
 	}
 
@@ -733,49 +1254,52 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 		Decision string `json:"decision"`
 		Reason   string `json:"reason,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
 	approval, err := s.approvalMgr.Decide(approvalID, req.Decision, req.Reason)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	if err := s.appendApprovalEvent(r.Context(), "approval_decided", approval.SessionID, map[string]string{
+	if err := s.appendApprovalEvent(r.Context(), audit.EventApprovalDecided, approval.SessionID, map[string]string{
 		"approval_id": approval.ID,
 		"decision":    req.Decision,
 		"reason":      req.Reason,
 	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	if req.Decision == "approve" {
+	switch req.Decision {
+	case "approve":
 		computedHash, hashErr := hashToolCall(approval.Call)
 		if hashErr != nil {
-			http.Error(w, fmt.Sprintf("failed to validate approved action: %v", hashErr), http.StatusInternalServerError)
+			writeStatusError(w, http.StatusInternalServerError, fmt.Sprintf("failed to validate approved action: %v", hashErr))
 			return
 		}
 		if computedHash != approval.ArgumentsHash {
 			_, _ = s.approvalMgr.Cancel(approvalID, "tool arguments mutated after approval", "arguments_mutated")
-			http.Error(w, "approved action payload no longer matches recorded hash", http.StatusConflict)
+			s.appendTurnLifecycleEvent(r.Context(), approval.SessionID, ctxmgr.TurnStatusCancelled, "approval_payload_mutated")
+			writeStatusError(w, http.StatusConflict, "approved action payload no longer matches recorded hash")
 			return
 		}
 
 		result, execErr := s.toolExecutor.Execute(r.Context(), approval.Call)
 		if toolDef, ok := s.toolRegistry.Get(approval.Call.ToolName); ok {
+			s.metrics.recordToolExecution(toolDef.SideEffect)
 			s.recordMCPCallEvent(r.Context(), approval.Call, toolDef, result, execErr)
 		}
 		if execErr != nil {
 			_, _ = s.approvalMgr.Cancel(approvalID, fmt.Sprintf("execution failed: %v", execErr), "execution_failed")
-			http.Error(w, fmt.Sprintf("failed to execute approved action: %v", execErr), http.StatusInternalServerError)
+			s.appendTurnLifecycleEvent(r.Context(), approval.SessionID, ctxmgr.TurnStatusFailed, "approval_execution_failed")
+			writeStatusError(w, http.StatusInternalServerError, fmt.Sprintf("failed to execute approved action: %v", execErr))
 			return
 		}
 		if markErr := s.approvalMgr.MarkExecuted(approvalID); markErr != nil {
-			http.Error(w, markErr.Error(), http.StatusInternalServerError)
+			writeStatusError(w, http.StatusInternalServerError, markErr.Error())
 			return
 		}
 		updated, ok := s.approvalMgr.Get(approvalID)
@@ -783,12 +1307,15 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 			approval = &updated
 		}
 
-		if err := s.appendApprovalEvent(r.Context(), "approval_executed", approval.SessionID, map[string]string{
+		if err := s.appendApprovalEvent(r.Context(), audit.EventApprovalExecuted, approval.SessionID, map[string]string{
 			"approval_id": approval.ID,
 		}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeStatusError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.appendTurnLifecycleEvent(r.Context(), approval.SessionID, ctxmgr.TurnStatusCompleted, "approval_executed")
+	case "deny":
+		s.appendTurnLifecycleEvent(r.Context(), approval.SessionID, ctxmgr.TurnStatusCancelled, "approval_denied")
 	}
 
 	if err := json.NewEncoder(w).Encode(approval); err != nil {
@@ -798,10 +1325,10 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+	response := map[string]interface{}{
 		"version": "1.0.0",
 		"trust_tiers": map[string]interface{}{
 			"tier0": map[string]interface{}{
@@ -834,23 +1361,61 @@ func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
 				"plugins": false,
 			},
 		},
-	}); err != nil {
+		"provider_policy": s.providerPolicy,
+	}
+
+	trustTier := strings.TrimSpace(r.URL.Query().Get("trust_tier"))
+	sensitivity := strings.TrimSpace(r.URL.Query().Get("sensitivity"))
+	task := strings.TrimSpace(r.URL.Query().Get("task"))
+	if trustTier != "" && sensitivity != "" && task != "" && s.routeEngine != nil {
+		decision, err := s.routeEngine.Select(policy.RouteRequest{
+			TrustTier:        trustTier,
+			SensitivityClass: sensitivity,
+			Task:             task,
+			PreferLocal:      true,
+		})
+		if err != nil {
+			writeStatusError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		response["route_decision"] = decision
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("failed to encode policy: %v", err)
 	}
+}
+
+func buildRouteEngine(providerPolicy policy.ProviderPolicy) *policy.RouteEngine {
+	routes := make([]policy.ProviderRoute, 0, len(providerPolicy.Providers))
+	for idx, provider := range providerPolicy.Providers {
+		routes = append(routes, policy.ProviderRoute{
+			Name:               provider.Name,
+			TrustTiers:         append([]string(nil), provider.TrustTiers...),
+			SensitivityClasses: append([]string(nil), provider.Sensitivity...),
+			Tasks:              append([]string(nil), provider.Tasks...),
+			Capabilities:       []string{"text"},
+			Local:              strings.HasPrefix(provider.Name, "local"),
+			EstimatedLatencyMS: 50 + idx*5,
+			EstimatedCostUSD:   float64(idx) * 0.001,
+		})
+	}
+
+	return policy.NewRouteEngine(routes)
 }
 
 func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	cursorParam := r.URL.Query().Get("cursor")
 	cursor, err := parseEventCursor(cursorParam)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("invalid cursor: %v", err), http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, fmt.Sprintf("invalid cursor: %v", err))
 		return
 	}
 
 	sessionID := r.URL.Query().Get("session_id")
 	if sessionID != "" && s.sessionMgr != nil {
 		if _, err := s.sessionMgr.Get(r.Context(), sessionID); err != nil {
-			http.Error(w, "session not found", http.StatusNotFound)
+			writeStatusError(w, http.StatusNotFound, "session not found")
 			return
 		}
 	}
@@ -862,7 +1427,7 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("failed to accept event stream websocket: %v", err)
-		http.Error(w, "websocket upgrade failed", http.StatusBadRequest)
+		writeStatusError(w, http.StatusBadRequest, "websocket upgrade failed")
 		return
 	}
 
@@ -1002,69 +1567,146 @@ func (s *Server) eventsSince(ctx context.Context, sessionID string, since time.T
 
 func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	var req tools.ExecuteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	req, ok := decodeToolExecuteRequest(w, r)
+	if !ok {
 		return
 	}
 
-	toolDef, found := s.toolRegistry.Get(req.ToolName)
-	if !found {
-		http.Error(w, "tool not found", http.StatusNotFound)
+	toolDef, ok := s.validateToolExecutionRequest(r.Context(), w, req)
+	if !ok {
 		return
 	}
 
-	if err := validateToolDataAccess(toolDef, req.Input); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	hidden, err := s.isToolHiddenForSession(r.Context(), req.SessionID, toolDef)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if hidden {
-		http.Error(w, "tool not found", http.StatusNotFound)
-		return
-	}
-
-	if err := validateMCPDestination(toolDef, req.Input); err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
+	if err := s.enforceTrustTierToolPolicy(r.Context(), req.SessionID, toolDef); err != nil {
+		writeStatusError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
 	if requiresApproval(toolDef) {
-		// Build execution context for the approval record.
-		var execCtxBytes json.RawMessage
-		execCtxMap := buildExecutionContext(req, toolDef)
-		execCtxBytes, _ = json.Marshal(execCtxMap)
-		approval, err := s.approvalMgr.Propose(req.SessionID, req, toolDef.SideEffect, toolDef.Limits.AllowedPaths, execCtxBytes)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := s.appendApprovalEvent(r.Context(), "approval_proposed", approval.SessionID, approval); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusAccepted)
-		if err := json.NewEncoder(w).Encode(approval); err != nil {
-			log.Printf("failed to encode pending approval: %v", err)
-		}
+		s.proposeToolApproval(w, r, req, toolDef)
 		return
 	}
 
+	s.executeToolRequest(w, r, req, toolDef)
+}
+
+func decodeToolExecuteRequest(w http.ResponseWriter, r *http.Request) (tools.ExecuteRequest, bool) {
+	var body struct {
+		ToolName  string                 `json:"tool_name"`
+		Input     map[string]interface{} `json:"input"`
+		SessionID string                 `json:"session_id,omitempty"`
+		Tool      string                 `json:"tool"`
+		Arguments map[string]interface{} `json:"arguments"`
+	}
+	if !decodeJSONBody(w, r, &body) {
+		return tools.ExecuteRequest{}, false
+	}
+
+	req := tools.ExecuteRequest{
+		ToolName:  strings.TrimSpace(body.ToolName),
+		Input:     body.Input,
+		SessionID: strings.TrimSpace(body.SessionID),
+	}
+
+	if req.ToolName == "" {
+		req.ToolName = strings.TrimSpace(body.Tool)
+	}
+	if req.Input == nil {
+		req.Input = body.Arguments
+	}
+
+	if req.ToolName == "" {
+		writeStatusError(w, http.StatusBadRequest, "tool_name (or legacy tool) is required")
+		return tools.ExecuteRequest{}, false
+	}
+	if req.Input == nil {
+		writeStatusError(w, http.StatusBadRequest, "input (or legacy arguments) is required")
+		return tools.ExecuteRequest{}, false
+	}
+
+	return req, true
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, target interface{}) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(target); err != nil {
+		writeStatusError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+
+	return true
+}
+
+func (s *Server) validateToolExecutionRequest(ctx context.Context, w http.ResponseWriter, req tools.ExecuteRequest) (tools.ToolDefinition, bool) {
+	toolDef, found := s.toolRegistry.Get(req.ToolName)
+	if !found {
+		writeStatusError(w, http.StatusNotFound, "tool not found")
+		return tools.ToolDefinition{}, false
+	}
+
+	if err := validateToolDataAccess(toolDef, req.Input); err != nil {
+		writeStatusError(w, http.StatusBadRequest, err.Error())
+		return tools.ToolDefinition{}, false
+	}
+
+	hidden, err := s.isToolHiddenForSession(ctx, req.SessionID, toolDef)
+	if err != nil {
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
+		return tools.ToolDefinition{}, false
+	}
+	if hidden {
+		writeStatusError(w, http.StatusNotFound, "tool not found")
+		return tools.ToolDefinition{}, false
+	}
+
+	if err := validateMCPDestination(toolDef, req.Input); err != nil {
+		writeStatusError(w, http.StatusForbidden, err.Error())
+		return tools.ToolDefinition{}, false
+	}
+
+	return toolDef, true
+}
+
+func (s *Server) proposeToolApproval(w http.ResponseWriter, r *http.Request, req tools.ExecuteRequest, toolDef tools.ToolDefinition) {
+	var execCtxBytes json.RawMessage
+	execCtxMap := buildExecutionContext(req, toolDef)
+	if b, err := json.Marshal(execCtxMap); err == nil {
+		execCtxBytes = b
+	} else {
+		log.Printf("failed to marshal execution context: %v", err)
+	}
+
+	approval, err := s.approvalMgr.Propose(req.SessionID, req, toolDef.SideEffect, toolDef.Limits.AllowedPaths, execCtxBytes)
+	if err != nil {
+		writeStatusError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.appendApprovalEvent(r.Context(), audit.EventApprovalProposed, approval.SessionID, approval); err != nil {
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.appendTurnLifecycleEvent(r.Context(), approval.SessionID, ctxmgr.TurnStatusAwaitingApproval, "approval_proposed")
+
+	w.WriteHeader(http.StatusAccepted)
+	if err := json.NewEncoder(w).Encode(approval); err != nil {
+		log.Printf("failed to encode pending approval: %v", err)
+	}
+}
+
+func (s *Server) executeToolRequest(w http.ResponseWriter, r *http.Request, req tools.ExecuteRequest, toolDef tools.ToolDefinition) {
+	s.metrics.recordToolExecution(toolDef.SideEffect)
 	result, err := s.toolExecutor.Execute(r.Context(), req)
 	s.recordMCPCallEvent(r.Context(), req, toolDef, result, err)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.appendTurnLifecycleEvent(r.Context(), req.SessionID, ctxmgr.TurnStatusFailed, "tool_execution_failed")
+		writeStatusError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
 	notices := make([]redactionNotice, 0)
 	if result.Output != nil {
 		result.Output, notices = applyRedactionPolicyWithNotices(secrets.NewPolicyExecutor(nil), req.ToolName, "tool_output", secrets.DestinationUI, result.Output)
@@ -1076,6 +1718,90 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(toolExecuteResponse{ToolResult: result, RedactionNotices: notices}); err != nil {
 		log.Printf("failed to encode tool response: %v", err)
 	}
+
+	if req.SessionID != "" {
+		s.appendTurnLifecycleEvent(r.Context(), req.SessionID, ctxmgr.TurnStatusCompleted, "tool_execution_completed")
+	}
+}
+
+func turnEventTypeForStatus(status ctxmgr.TurnStatus) string {
+	switch status {
+	case ctxmgr.TurnStatusAwaitingApproval:
+		return audit.EventTurnAwaitingApproval
+	case ctxmgr.TurnStatusCompleted:
+		return audit.EventTurnCompleted
+	case ctxmgr.TurnStatusFailed:
+		return audit.EventTurnFailed
+	case ctxmgr.TurnStatusCancelled:
+		return audit.EventTurnCancelled
+	default:
+		return ""
+	}
+}
+
+func (s *Server) appendTurnLifecycleEvent(ctx context.Context, sessionID string, status ctxmgr.TurnStatus, cause string) {
+	if s.eventStore == nil || s.turnMgr == nil || sessionID == "" {
+		return
+	}
+
+	turnID, err := s.resolveActiveTurnID(ctx, sessionID)
+	if err != nil || turnID == "" {
+		return
+	}
+
+	eventType := turnEventTypeForStatus(status)
+	if eventType == "" {
+		return
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"entity_type":          "turn",
+		"entity_id":            turnID,
+		"next_state":           string(status),
+		"cause":                cause,
+		"transition_timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+		"related_ids": map[string]interface{}{
+			"session_id": sessionID,
+			"turn_id":    turnID,
+		},
+	})
+	if err != nil {
+		return
+	}
+
+	_ = s.eventStore.Append(ctx, audit.Event{
+		ID:            uuid.NewString(),
+		SessionID:     sessionID,
+		TurnID:        turnID,
+		Timestamp:     time.Now().UTC(),
+		EventType:     eventType,
+		Actor:         requestActor(ctx),
+		PolicyVersion: "1.0.0",
+		Payload:       payload,
+	})
+}
+
+func (s *Server) resolveActiveTurnID(ctx context.Context, sessionID string) (string, error) {
+	turns, err := s.turnMgr.ListBySession(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	var chosen *ctxmgr.Turn
+	for _, turn := range turns {
+		if turn == nil {
+			continue
+		}
+		if turn.Status != ctxmgr.TurnStatusActive && turn.Status != ctxmgr.TurnStatusAwaitingApproval {
+			continue
+		}
+		if chosen == nil || turn.UpdatedAt.After(chosen.UpdatedAt) {
+			chosen = turn
+		}
+	}
+	if chosen == nil {
+		return "", nil
+	}
+	return chosen.ID, nil
 }
 
 func newApprovalTransitionRecorder(eventStore *audit.EventStore) ApprovalTransitionRecorder {
@@ -1114,7 +1840,7 @@ func newApprovalTransitionRecorder(eventStore *audit.EventStore) ApprovalTransit
 			ID:            uuid.NewString(),
 			SessionID:     sessionID,
 			Timestamp:     transition.Timestamp,
-			EventType:     "approval.transition",
+			EventType:     audit.EventApprovalTransition,
 			Actor:         "controlplane",
 			PolicyVersion: "1.0.0",
 			Payload:       payload,
@@ -1219,8 +1945,8 @@ func (s *Server) recordMCPCallEvent(ctx context.Context, req tools.ExecuteReques
 		ID:        uuid.NewString(),
 		SessionID: req.SessionID,
 		Timestamp: time.Now().UTC(),
-		EventType: "mcp.call",
-		Actor:     "controlplane",
+		EventType: audit.EventMCPCall,
+		Actor:     requestActor(ctx),
 		Payload:   encodedPayload,
 	})
 	if err != nil {
@@ -1377,8 +2103,8 @@ func (s *Server) recordRedactionEvent(ctx context.Context, toolName string, noti
 		ID:            uuid.NewString(),
 		SessionID:     redactionAuditSessionID,
 		Timestamp:     time.Now().UTC(),
-		EventType:     "tool_output_redaction",
-		Actor:         "system",
+		EventType:     audit.EventToolRedaction,
+		Actor:         requestActor(ctx),
 		PolicyVersion: "1.0.0",
 		Payload:       payload,
 	})

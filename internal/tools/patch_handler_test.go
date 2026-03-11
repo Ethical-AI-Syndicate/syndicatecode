@@ -12,7 +12,7 @@ import (
 func TestApplyPatchHandler(t *testing.T) {
 	repoRoot := t.TempDir()
 	engine := patch.NewEngine(repoRoot)
-	handler := ApplyPatchHandler(engine)
+	handler := ApplyPatchHandler(engine, nil)
 
 	result, err := handler(context.Background(), map[string]interface{}{
 		"patch": "*** Begin Patch\n*** Add File: src/a.txt\n+hello\n*** End Patch",
