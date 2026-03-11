@@ -56,7 +56,16 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 		for stream.Next() {
 			chunk := stream.Current()
 
-			// Emit usage and stop reason if present
+			// Emit input tokens if present (typically on the final usage chunk)
+			if chunk.Usage.PromptTokens != 0 {
+				select {
+				case ch <- models.MessageStartEvent{InputTokens: int(chunk.Usage.PromptTokens)}:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			// Emit output tokens and stop reason if present
 			if chunk.Usage.CompletionTokens != 0 {
 				var stopReason string
 				if len(chunk.Choices) > 0 {
@@ -123,6 +132,9 @@ func buildChatCompletionParams(modelID string, p models.Params) openaisdk.ChatCo
 	params := openaisdk.ChatCompletionNewParams{
 		Model:    modelID,
 		Messages: buildMessages(p.Messages),
+		StreamOptions: openaisdk.ChatCompletionStreamOptionsParam{
+			IncludeUsage: openaisdk.Bool(true),
+		},
 	}
 
 	// MaxTokens
