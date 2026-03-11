@@ -75,6 +75,18 @@ type ModelInvocationRecord struct {
 	CreatedAt     time.Time
 }
 
+type FileMutationRecord struct {
+	ID           string
+	SessionID    string
+	TurnID       string
+	PatchID      string
+	Path         string
+	MutationType string
+	BeforeHash   string
+	AfterHash    string
+	AppliedAt    time.Time
+}
+
 type Event struct {
 	ID            string          `json:"event_id"`
 	SessionID     string          `json:"session_id"`
@@ -363,6 +375,18 @@ func (s *EventStore) RecordModelInvocation(ctx context.Context, r ModelInvocatio
 		r.ID, r.SessionID, r.TurnID, r.Provider, r.Model,
 		r.RoutingPolicy, r.PromptRef, r.ResponseRef,
 		r.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *EventStore) RecordFileMutation(ctx context.Context, r FileMutationRecord) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO file_mutations
+		 (id, session_id, turn_id, patch_id, path, mutation_type, before_hash, after_hash, applied_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.SessionID, r.TurnID, r.PatchID,
+		r.Path, r.MutationType, r.BeforeHash, r.AfterHash,
+		r.AppliedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
 }

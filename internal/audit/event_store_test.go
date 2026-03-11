@@ -601,6 +601,54 @@ func TestEventStore_RecordModelInvocation_Bead_l3d_15_2(t *testing.T) {
 	}
 }
 
+func TestEventStore_RecordFileMutation_Bead_l3d_15_3(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Pre-create parent rows required by FK constraints.
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO sessions (id, repo_path, trust_tier, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"sess-1", "/repo", "trusted", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO turns (id, session_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"turn-1", "sess-1", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert turn: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO patch_proposals (id, session_id, turn_id, proposal_ref, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"patch-1", "sess-1", "turn-1", "/path/to/patch", "pending", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert patch_proposals: %v", err)
+	}
+
+	rec := FileMutationRecord{
+		ID:           "mut-1",
+		SessionID:    "sess-1",
+		TurnID:       "turn-1",
+		PatchID:      "patch-1",
+		Path:         "internal/foo/bar.go",
+		MutationType: "update",
+		BeforeHash:   "abc123",
+		AfterHash:    "def456",
+		AppliedAt:    now,
+	}
+	if err := store.RecordFileMutation(ctx, rec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEventTypeConstants_Bead_l3d_X_1(t *testing.T) {
 	cases := []struct {
 		constant string
