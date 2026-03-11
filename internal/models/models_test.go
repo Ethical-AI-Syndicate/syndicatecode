@@ -2,8 +2,8 @@ package models_test
 
 import (
 	"context"
-	"testing"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/models"
+	"testing"
 )
 
 func TestContentBlockTypes_Bead_l3d_16_1(t *testing.T) {
@@ -28,9 +28,9 @@ func TestLanguageModelInterface_Bead_l3d_16_1(t *testing.T) {
 }
 
 // minimal mocks — just for interface compliance
-type mockModel struct{}
+type mockModel struct{ id string }
 
-func (m *mockModel) ModelID() string { return "mock" }
+func (m *mockModel) ModelID() string { return m.id }
 func (m *mockModel) Stream(_ context.Context, _ models.Params) (<-chan models.StreamEvent, error) {
 	ch := make(chan models.StreamEvent)
 	close(ch)
@@ -39,5 +39,26 @@ func (m *mockModel) Stream(_ context.Context, _ models.Params) (<-chan models.St
 
 type mockProvider struct{}
 
-func (p *mockProvider) Name() string { return "mock" }
-func (p *mockProvider) Model(_ string) models.LanguageModel { return &mockModel{} }
+func (p *mockProvider) Name() string                         { return "mock" }
+func (p *mockProvider) Model(id string) models.LanguageModel { return &mockModel{id: id} }
+
+func TestRegistry_RegisterAndResolve_Bead_l3d_16_2(t *testing.T) {
+	reg := models.NewRegistry()
+	reg.Register("test", &mockProvider{})
+
+	m, err := reg.Resolve("test", "test-model-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.ModelID() != "test-model-1" {
+		t.Errorf("got model ID %q, want %q", m.ModelID(), "test-model-1")
+	}
+}
+
+func TestRegistry_ResolveUnknownProvider_Bead_l3d_16_2(t *testing.T) {
+	reg := models.NewRegistry()
+	_, err := reg.Resolve("nonexistent", "x")
+	if err == nil {
+		t.Fatal("expected error for unknown provider")
+	}
+}
