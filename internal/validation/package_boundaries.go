@@ -31,17 +31,17 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/controlplane": {
 				Owner:            "controlplane",
 				Responsibilities: []string{"request orchestration", "session and turn coordination", "policy surface integration"},
-				AllowedImports:   []string{"internal/audit", "internal/context", "internal/mcp", "internal/patch", "internal/policy", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
+				AllowedImports:   []string{"internal/audit", "internal/context", "internal/mcp", "internal/patch", "internal/policy", "internal/requestmeta", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
 			},
 			"internal/session": {
 				Owner:            "state",
 				Responsibilities: []string{"session lifecycle"},
-				AllowedImports:   []string{"internal/audit", "internal/state"},
+				AllowedImports:   []string{"internal/audit", "internal/requestmeta", "internal/state"},
 			},
 			"internal/context": {
 				Owner:            "ai-systems",
 				Responsibilities: []string{"turn lifecycle", "context assembly", "token budgeting", "retrieval profile classification"},
-				AllowedImports:   []string{"internal/audit", "internal/secrets", "internal/session", "internal/state"},
+				AllowedImports:   []string{"internal/audit", "internal/requestmeta", "internal/secrets", "internal/session", "internal/state"},
 			},
 			"internal/state": {
 				Owner:            "state",
@@ -56,6 +56,11 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/git": {
 				Owner:            "runtime",
 				Responsibilities: []string{"task-scoped git safety and provenance"},
+				AllowedImports:   []string{},
+			},
+			"internal/models": {
+				Owner:            "ai-systems",
+				Responsibilities: []string{"provider-agnostic model abstraction", "streaming event contracts"},
 				AllowedImports:   []string{},
 			},
 			"internal/mcp": {
@@ -91,6 +96,11 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/validation": {
 				Owner:            "architecture",
 				Responsibilities: []string{"architecture and boundary validation"},
+				AllowedImports:   []string{},
+			},
+			"internal/requestmeta": {
+				Owner:            "platform",
+				Responsibilities: []string{"request-scoped actor and role metadata"},
 				AllowedImports:   []string{},
 			},
 			"pkg/api": {
