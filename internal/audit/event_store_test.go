@@ -513,6 +513,94 @@ func TestRetentionCleanup_Bead_l3d_3_4(t *testing.T) {
 	t.Run("cleanup expired is idempotent", TestEventStore_CleanupExpiredIsIdempotent)
 }
 
+func TestEventStore_RecordToolInvocation_Bead_l3d_15_2(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Pre-create parent rows required by FK constraints.
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO sessions (id, repo_path, trust_tier, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"sess-1", "/repo", "trusted", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO turns (id, session_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"turn-1", "sess-1", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert turn: %v", err)
+	}
+
+	// Create approval row if needed (optional for tool invocation)
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO approvals (id, session_id, turn_id, tool_name, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"app-1", "sess-1", "turn-1", "read_file", "approved", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert approval: %v", err)
+	}
+
+	rec := ToolInvocationRecord{
+		ID:         "inv-1",
+		SessionID:  "sess-1",
+		TurnID:     "turn-1",
+		ApprovalID: "app-1",
+		ToolName:   "read_file",
+		Success:    true,
+		DurationMS: 42,
+		CreatedAt:  now,
+	}
+	if err := store.RecordToolInvocation(ctx, rec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEventStore_RecordModelInvocation_Bead_l3d_15_2(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Pre-create parent rows required by FK constraints.
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO sessions (id, repo_path, trust_tier, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"sess-1", "/repo", "trusted", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO turns (id, session_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"turn-1", "sess-1", "active", now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("insert turn: %v", err)
+	}
+
+	rec := ModelInvocationRecord{
+		ID:        "mod-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Provider:  "anthropic",
+		Model:     "claude-sonnet-4-6",
+		CreatedAt: now,
+	}
+	if err := store.RecordModelInvocation(ctx, rec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEventTypeConstants_Bead_l3d_X_1(t *testing.T) {
 	cases := []struct {
 		constant string

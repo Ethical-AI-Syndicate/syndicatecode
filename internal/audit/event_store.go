@@ -16,10 +16,11 @@ type EventStore struct {
 }
 
 func NewEventStore(path string) (*EventStore, error) {
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	db.SetMaxOpenConns(1)
 
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
@@ -34,166 +35,7 @@ func NewEventStore(path string) (*EventStore, error) {
 }
 
 func (s *EventStore) migrate() error {
-	schema := `
-	PRAGMA foreign_keys = ON;
-
-	CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		repo_path TEXT NOT NULL,
-		trust_tier TEXT NOT NULL,
-		status TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status, updated_at);
-
-	CREATE TABLE IF NOT EXISTS turns (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		message TEXT,
-		status TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, created_at);
-
-	CREATE TABLE IF NOT EXISTS approvals (
-		id TEXT PRIMARY KEY,
-		session_id TEXT,
-		turn_id TEXT,
-		tool_name TEXT NOT NULL,
-		state TEXT NOT NULL,
-		decision_reason TEXT,
-		arguments_hash TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
-		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, created_at);
-	CREATE INDEX IF NOT EXISTS idx_approvals_state ON approvals(state, updated_at);
-
-	CREATE TABLE IF NOT EXISTS tool_invocations (
-		id TEXT PRIMARY KEY,
-		session_id TEXT,
-		turn_id TEXT,
-		approval_id TEXT,
-		tool_name TEXT NOT NULL,
-		success INTEGER NOT NULL,
-		duration_ms INTEGER NOT NULL,
-		output_ref TEXT,
-		created_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
-		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL,
-		FOREIGN KEY(approval_id) REFERENCES approvals(id) ON DELETE SET NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_tool_invocations_session ON tool_invocations(session_id, created_at);
-
-	CREATE TABLE IF NOT EXISTS model_invocations (
-		id TEXT PRIMARY KEY,
-		session_id TEXT,
-		turn_id TEXT,
-		provider TEXT NOT NULL,
-		model TEXT NOT NULL,
-		routing_policy TEXT,
-		prompt_ref TEXT,
-		response_ref TEXT,
-		created_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
-		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_model_invocations_session ON model_invocations(session_id, created_at);
-
-	CREATE TABLE IF NOT EXISTS context_fragments (
-		id TEXT PRIMARY KEY,
-		session_id TEXT,
-		turn_id TEXT,
-		source_type TEXT NOT NULL,
-		source_ref TEXT,
-		included INTEGER NOT NULL,
-		exclusion_reason TEXT,
-		sensitivity TEXT,
-		redaction_action TEXT,
-		redaction_denied INTEGER NOT NULL,
-		content_ref TEXT,
-		created_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
-		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_context_fragments_turn ON context_fragments(turn_id, created_at);
-
-	CREATE TABLE IF NOT EXISTS patch_proposals (
-		id TEXT PRIMARY KEY,
-		session_id TEXT,
-		turn_id TEXT,
-		proposal_ref TEXT,
-		status TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
-		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_patch_proposals_turn ON patch_proposals(turn_id, created_at);
-
-	CREATE TABLE IF NOT EXISTS file_mutations (
-		id TEXT PRIMARY KEY,
-		session_id TEXT,
-		turn_id TEXT,
-		patch_id TEXT,
-		path TEXT NOT NULL,
-		mutation_type TEXT NOT NULL,
-		before_hash TEXT,
-		after_hash TEXT,
-		applied_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
-		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL,
-		FOREIGN KEY(patch_id) REFERENCES patch_proposals(id) ON DELETE SET NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_file_mutations_turn ON file_mutations(turn_id, applied_at);
-
-	CREATE TABLE IF NOT EXISTS artifacts (
-		id TEXT PRIMARY KEY,
-		session_id TEXT,
-		turn_id TEXT,
-		kind TEXT NOT NULL,
-		storage_path TEXT NOT NULL,
-		sha256 TEXT,
-		redaction_state TEXT,
-		expires_at TEXT,
-		created_at TEXT NOT NULL,
-		FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
-		FOREIGN KEY(turn_id) REFERENCES turns(id) ON DELETE SET NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at);
-	CREATE INDEX IF NOT EXISTS idx_artifacts_expires ON artifacts(expires_at) WHERE expires_at IS NOT NULL;
-
-	CREATE TABLE IF NOT EXISTS events (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		turn_id TEXT,
-		timestamp TEXT NOT NULL,
-		event_type TEXT NOT NULL,
-		actor TEXT NOT NULL,
-		policy_version TEXT,
-		trust_tier TEXT,
-		payload TEXT
-	);
-	
-	CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, timestamp);
-	CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, timestamp);
-	`
-	_, err := s.db.Exec(schema)
-	return err
+	return applyMigrations(s.db)
 }
 
 // ArtifactRecord is a stored reference to an artifact blob.
@@ -207,6 +49,30 @@ type ArtifactRecord struct {
 	RedactionState string     `json:"redaction_state,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
+}
+
+type ToolInvocationRecord struct {
+	ID         string
+	SessionID  string
+	TurnID     string
+	ApprovalID string
+	ToolName   string
+	Success    bool
+	DurationMS int64
+	OutputRef  string
+	CreatedAt  time.Time
+}
+
+type ModelInvocationRecord struct {
+	ID            string
+	SessionID     string
+	TurnID        string
+	Provider      string
+	Model         string
+	RoutingPolicy string
+	PromptRef     string
+	ResponseRef   string
+	CreatedAt     time.Time
 }
 
 type Event struct {
@@ -241,6 +107,40 @@ func (s *EventStore) QueryBySession(ctx context.Context, sessionID string) ([]Ev
 		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload
 		 FROM events WHERE session_id = ? ORDER BY timestamp ASC, rowid ASC`,
 		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	return s.scanRows(rows)
+}
+
+func (s *EventStore) QuerySessionEvents(ctx context.Context) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload
+		 FROM events WHERE event_type IN (?, ?)
+		 ORDER BY timestamp ASC, rowid ASC`,
+		EventSessionStarted,
+		EventSessionTerminated,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	return s.scanRows(rows)
+}
+
+func (s *EventStore) QueryByTurn(ctx context.Context, turnID string) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, turn_id, timestamp, event_type, actor, policy_version, trust_tier, payload
+		 FROM events WHERE turn_id = ? ORDER BY timestamp ASC, rowid ASC`,
+		turnID,
 	)
 	if err != nil {
 		return nil, err
@@ -296,6 +196,20 @@ func (s *EventStore) Close() error {
 	return s.db.Close()
 }
 
+func (s *EventStore) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("event store unavailable")
+	}
+	return s.db.PingContext(ctx)
+}
+
+func (s *EventStore) SchemaVersion() (int, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("event store unavailable")
+	}
+	return currentSchemaVersion(s.db)
+}
+
 // CleanupResult reports how many rows were deleted by a retention pass.
 type CleanupResult struct {
 	ArtifactsDeleted int
@@ -330,7 +244,7 @@ func (s *EventStore) CleanupExpired(ctx context.Context, threshold time.Time) (C
 		ID:        fmt.Sprintf("ret-%d", threshold.UnixNano()),
 		SessionID: "system:retention",
 		Timestamp: threshold,
-		EventType: "retention.cleanup",
+		EventType: EventRetentionClean,
 		Actor:     "system",
 		Payload:   payload,
 	}
@@ -423,4 +337,32 @@ func scanArtifact(s artifactScanner) (ArtifactRecord, error) {
 		}
 	}
 	return a, nil
+}
+
+func (s *EventStore) RecordToolInvocation(ctx context.Context, r ToolInvocationRecord) error {
+	success := 0
+	if r.Success {
+		success = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO tool_invocations
+		 (id, session_id, turn_id, approval_id, tool_name, success, duration_ms, output_ref, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.SessionID, r.TurnID, r.ApprovalID,
+		r.ToolName, success, r.DurationMS, r.OutputRef,
+		r.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *EventStore) RecordModelInvocation(ctx context.Context, r ModelInvocationRecord) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO model_invocations
+		 (id, session_id, turn_id, provider, model, routing_policy, prompt_ref, response_ref, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.SessionID, r.TurnID, r.Provider, r.Model,
+		r.RoutingPolicy, r.PromptRef, r.ResponseRef,
+		r.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
 }
