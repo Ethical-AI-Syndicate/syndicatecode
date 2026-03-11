@@ -63,6 +63,11 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 				Responsibilities: []string{"provider-agnostic model abstraction", "streaming event contracts"},
 				AllowedImports:   []string{},
 			},
+			"internal/models/anthropic": {
+				Owner:            "ai-systems",
+				Responsibilities: []string{"Anthropic SDK streaming provider implementation"},
+				AllowedImports:   []string{"internal/models"},
+			},
 			"internal/mcp": {
 				Owner:            "integrations",
 				Responsibilities: []string{"MCP plugin loading and registry integration"},
