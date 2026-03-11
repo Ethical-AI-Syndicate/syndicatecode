@@ -18,6 +18,7 @@ func TestEventStore_MigrateCreatesCoreTablesAndIndexes(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	expectedTables := []string{
+		"schema_migrations",
 		"sessions",
 		"turns",
 		"approvals",
@@ -48,12 +49,80 @@ func TestEventStore_MigrateCreatesCoreTablesAndIndexes(t *testing.T) {
 		"idx_artifacts_session",
 		"idx_events_session",
 		"idx_events_type",
+		"idx_events_turn",
 	}
 
 	for _, idx := range expectedIndexes {
 		if !schemaObjectExists(t, store, "index", idx) {
 			t.Fatalf("expected index %s to exist", idx)
 		}
+	}
+}
+
+func TestEventStore_MigrateRecordsSchemaVersion(t *testing.T) {
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	var maxVersion int
+	if err := store.db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&maxVersion); err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	if maxVersion != 1 {
+		t.Fatalf("expected max schema version 1, got %d", maxVersion)
+	}
+}
+
+func TestEventStore_MigrateBootstrapsLegacySchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatalf("failed to open legacy db: %v", err)
+	}
+
+	if _, err := db.Exec(`CREATE TABLE events (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, timestamp TEXT NOT NULL, event_type TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT)`); err != nil {
+		_ = db.Close()
+		t.Fatalf("failed to create legacy table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("failed to close legacy db: %v", err)
+	}
+
+	store, err := NewEventStore(path)
+	if err != nil {
+		t.Fatalf("failed to migrate legacy db: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	var maxVersion int
+	if err := store.db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&maxVersion); err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	if maxVersion != 1 {
+		t.Fatalf("expected max schema version 1 after bootstrap, got %d", maxVersion)
+	}
+}
+
+func TestEventStore_PingAndSchemaVersion(t *testing.T) {
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.Ping(context.Background()); err != nil {
+		t.Fatalf("ping failed: %v", err)
+	}
+
+	version, err := store.SchemaVersion()
+	if err != nil {
+		t.Fatalf("schema version failed: %v", err)
+	}
+	if version != 1 {
+		t.Fatalf("expected schema version 1, got %d", version)
 	}
 }
 
@@ -372,6 +441,60 @@ func schemaObjectExists(t *testing.T, store *EventStore, objectType, name string
 	return exists == 1
 }
 
+func TestEventStore_QueryByTurnFiltersCorrectly(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("NewEventStore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	appendEvent := func(id, sessionID, turnID, eventType string) {
+		t.Helper()
+		if err := store.Append(ctx, Event{
+			ID:            id,
+			SessionID:     sessionID,
+			TurnID:        turnID,
+			EventType:     eventType,
+			Actor:         "test",
+			Timestamp:     now,
+			PolicyVersion: "1.0.0",
+		}); err != nil {
+			t.Fatalf("Append(%s): %v", id, err)
+		}
+	}
+
+	appendEvent("e1", "sess-a", "turn-1", "tool.execute")
+	appendEvent("e2", "sess-a", "turn-1", "approval.transition")
+	appendEvent("e3", "sess-a", "turn-2", "tool.execute")
+	appendEvent("e4", "sess-b", "turn-3", "tool.execute")
+
+	events, err := store.QueryByTurn(ctx, "turn-1")
+	if err != nil {
+		t.Fatalf("QueryByTurn: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events for turn-1, got %d", len(events))
+	}
+	for _, e := range events {
+		if e.TurnID != "turn-1" {
+			t.Errorf("unexpected event turn_id %q in results", e.TurnID)
+		}
+	}
+
+	empty, err := store.QueryByTurn(ctx, "turn-unknown")
+	if err != nil {
+		t.Fatalf("QueryByTurn unknown turn: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected 0 events for unknown turn, got %d", len(empty))
+	}
+}
+
 // TestArtifactStorageLifecycle_Bead_l3d_3_2 is the bead-tagged conformance entry point
 // for l3d.3.2 (artifact reference storage strategy).
 func TestArtifactStorageLifecycle_Bead_l3d_3_2(t *testing.T) {
@@ -388,4 +511,18 @@ func TestRetentionCleanup_Bead_l3d_3_4(t *testing.T) {
 	t.Parallel()
 	t.Run("cleanup expired deletes artifacts and emits event", TestEventStore_CleanupExpiredDeletesArtifactsAndEmitsEvent)
 	t.Run("cleanup expired is idempotent", TestEventStore_CleanupExpiredIsIdempotent)
+}
+
+func TestEventTypeConstants_Bead_l3d_X_1(t *testing.T) {
+	types := []string{
+		EventModelInvoked,
+		EventToolInvoked,
+		EventToolResult,
+		EventFileMutation,
+	}
+	for _, et := range types {
+		if et == "" {
+			t.Errorf("event type constant is empty")
+		}
+	}
 }
