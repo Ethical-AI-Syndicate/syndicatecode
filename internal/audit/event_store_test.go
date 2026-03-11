@@ -514,15 +514,18 @@ func TestRetentionCleanup_Bead_l3d_3_4(t *testing.T) {
 }
 
 func TestEventTypeConstants_Bead_l3d_X_1(t *testing.T) {
-	types := []string{
-		EventModelInvoked,
-		EventToolInvoked,
-		EventToolResult,
-		EventFileMutation,
+	cases := []struct {
+		constant string
+		want     string
+	}{
+		{EventModelInvoked, "model_invocation"},
+		{EventToolInvoked, "tool_invocation"},
+		{EventToolResult, "tool_result"},
+		{EventFileMutation, "file_mutation"},
 	}
-	for _, et := range types {
-		if et == "" {
-			t.Errorf("event type constant is empty")
+	for _, tc := range cases {
+		if tc.constant != tc.want {
+			t.Errorf("got %q, want %q", tc.constant, tc.want)
 		}
 	}
 }
