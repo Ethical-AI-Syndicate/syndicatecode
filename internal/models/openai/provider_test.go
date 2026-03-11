@@ -34,3 +34,17 @@ func TestStreamReturnsChannel_Bead_l3d_16_4(t *testing.T) {
 	_ = err
 	// The test just verifies the call doesn't panic
 }
+
+func TestMessageStartEventType_Bead_l3d_16_4(t *testing.T) {
+	// Structural test: verify that MessageStartEvent is accepted by the StreamEvent channel type
+	// and that InputTokens field is properly typed as int
+	event := models.MessageStartEvent{InputTokens: 42}
+
+	// Verify the event implements StreamEvent interface
+	var _ models.StreamEvent = event
+
+	// Verify we can read the InputTokens field
+	if event.InputTokens != 42 {
+		t.Errorf("expected InputTokens=42, got %d", event.InputTokens)
+	}
+}
