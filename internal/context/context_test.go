@@ -737,3 +737,26 @@ func TestTokenBudget_Allocation(t *testing.T) {
 		t.Error("expected error for over-allocation")
 	}
 }
+
+func TestContextAssembler_AssembleFromRanked_Bead_l3d_15_5(t *testing.T) {
+	budget := DefaultCategoryBudget(4000)
+	assembler := NewContextAssembler(budget.Total)
+
+	ranked := []RankedFragment{
+		{Fragment: ContextFragment{SourceType: "instruction", TokenCount: 100}, Rank: 10},
+		{Fragment: ContextFragment{SourceType: "file", TokenCount: 200}, Rank: 5},
+	}
+
+	fragments := assembler.AssembleFromRanked(ranked, budget)
+
+	if len(fragments) == 0 {
+		t.Fatal("expected at least one fragment to be allocated")
+	}
+	totalTokens := 0
+	for _, f := range fragments {
+		totalTokens += f.TokenCount
+	}
+	if totalTokens > budget.Total {
+		t.Errorf("total tokens %d exceeds budget %d", totalTokens, budget.Total)
+	}
+}
