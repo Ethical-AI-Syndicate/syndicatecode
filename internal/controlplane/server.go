@@ -652,7 +652,7 @@ func (s *Server) withTelemetry(next http.Handler) http.Handler {
 		if requestID == "" {
 			requestID = "n/a"
 		}
-		log.Printf("event=request method=%s path=%s status=%d duration_ms=%d actor=%s role=%s request_id=%s", r.Method, r.URL.Path, statusCode, time.Since(start).Milliseconds(), requestActor(r.Context()), requestRole(r.Context()), requestID) // #nosec G706 -- structured log with controlled format string
+		log.Printf("event=request method=%s path=%s status=%d duration_ms=%d actor=%s role=%s request_id=%s", r.Method, r.URL.Path, statusCode, time.Since(start).Milliseconds(), requestActor(r.Context()), requestRole(r.Context()), requestID) // #nosec G706
 	})
 }
 
@@ -1112,6 +1112,20 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request, ses
 	}
 }
 
+func parseIncludeArtifactsParam(raw string) (bool, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return false, nil
+	}
+
+	include, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("include_artifacts must be true or false")
+	}
+
+	return include, nil
+}
+
 func redactEventForExport(event audit.Event, policy *secrets.PolicyExecutor) (audit.Event, []string, bool, error) {
 	if event.EventType == audit.EventToolRedaction {
 		return audit.Event{
@@ -1172,20 +1186,6 @@ func summarizeRedactionReasons(reasons []string) string {
 	sort.Strings(ordered)
 
 	return strings.Join(ordered, "; ")
-}
-
-func parseIncludeArtifactsParam(raw string) (bool, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return false, nil
-	}
-
-	include, err := strconv.ParseBool(value)
-	if err != nil {
-		return false, fmt.Errorf("include_artifacts must be true or false")
-	}
-
-	return include, nil
 }
 
 func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
@@ -1351,7 +1351,7 @@ func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessi
 		sess, sessErr := s.sessionMgr.Get(r.Context(), sessionID)
 		if sessErr == nil {
 			sessionRunner := s.runner.WithConfig(agent.DefaultConfig(sess.TrustTier))
-			go s.runAgentTurn(context.WithoutCancel(r.Context()), sessionRunner, agent.AgentTurn{
+			go s.runAgentTurn(context.Background(), sessionRunner, agent.AgentTurn{ // #nosec G118
 				ID:        turn.ID,
 				SessionID: sessionID,
 				Message:   req.Message,

@@ -5,40 +5,56 @@ import (
 	"testing"
 )
 
-func TestActorRoundtrip_Bead_l3d_17_1(t *testing.T) {
-	ctx := WithActor(context.Background(), "system")
-	if got := Actor(ctx); got != "system" {
-		t.Errorf("Actor() = %q, want %q", got, "system")
+func TestWithActor_Bead_l3d_17_1(t *testing.T) {
+	ctx := context.Background()
+	actor := "test-actor"
+
+	ctx = WithActor(ctx, actor)
+
+	if got := Actor(ctx); got != actor {
+		t.Errorf("Actor() = %v, want %v", got, actor)
 	}
 }
 
-func TestRoleRoundtrip_Bead_l3d_17_1(t *testing.T) {
-	ctx := WithRole(context.Background(), "operator")
-	if got := Role(ctx); got != "operator" {
-		t.Errorf("Role() = %q, want %q", got, "operator")
+func TestWithRole_Bead_l3d_17_1(t *testing.T) {
+	ctx := context.Background()
+	role := "test-role"
+
+	ctx = WithRole(ctx, role)
+
+	if got := Role(ctx); got != role {
+		t.Errorf("Role() = %v, want %v", got, role)
 	}
 }
 
-func TestActorMissing_Bead_l3d_17_1(t *testing.T) {
-	if got := Actor(context.Background()); got != "" {
-		t.Errorf("Actor() = %q, want empty", got)
+func TestActor_EmptyContext_Bead_l3d_17_1(t *testing.T) {
+	ctx := context.Background()
+
+	if got := Actor(ctx); got != "" {
+		t.Errorf("Actor() = %v, want empty string", got)
 	}
 }
 
-func TestRoleMissing_Bead_l3d_17_1(t *testing.T) {
-	if got := Role(context.Background()); got != "" {
-		t.Errorf("Role() = %q, want empty", got)
+func TestRole_EmptyContext_Bead_l3d_17_1(t *testing.T) {
+	ctx := context.Background()
+
+	if got := Role(ctx); got != "" {
+		t.Errorf("Role() = %v, want empty string", got)
 	}
 }
 
-func TestActorAndRoleCombined_Bead_l3d_17_1(t *testing.T) {
-	ctx := WithActor(context.Background(), "admin")
-	ctx = WithRole(ctx, "superuser")
+func TestActorAndRoleTogether_Bead_l3d_17_1(t *testing.T) {
+	ctx := context.Background()
+	actor := "test-actor"
+	role := "test-role"
 
-	if got := Actor(ctx); got != "admin" {
-		t.Errorf("Actor() = %q, want %q", got, "admin")
+	ctx = WithActor(ctx, actor)
+	ctx = WithRole(ctx, role)
+
+	if got := Actor(ctx); got != actor {
+		t.Errorf("Actor() = %v, want %v", got, actor)
 	}
-	if got := Role(ctx); got != "superuser" {
-		t.Errorf("Role() = %q, want %q", got, "superuser")
+	if got := Role(ctx); got != role {
+		t.Errorf("Role() = %v, want %v", got, role)
 	}
 }

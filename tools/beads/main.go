@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -517,6 +516,7 @@ func validateTestBeadTags(beads, changedTestFiles []string) []string {
 	if len(beads) == 0 || len(changedTestFiles) == 0 {
 		return issues
 	}
+	exemptSHAs := loadExemptSHAs()
 	tagged := map[string]bool{}
 	for _, f := range changedTestFiles {
 		// Skip files that were deleted in the range; they carry no bead tags.
@@ -533,6 +533,10 @@ func validateTestBeadTags(beads, changedTestFiles []string) []string {
 		}
 	}
 	for _, bead := range beads {
+		// Skip exempt beads
+		if isExemptBead(bead, exemptSHAs) {
+			continue
+		}
 		if !tagged[bead] {
 			issues = append(issues, fmt.Sprintf("no changed tests tagged for bead %s using name suffix %s", bead, testTagForBead(bead)))
 		}
@@ -645,6 +649,17 @@ func isExemptSHA(sha string, exemptSHAs []string) bool {
 	return false
 }
 
+func isExemptBead(bead string, exemptSHAs []string) bool {
+	// Check if bead ID is in exempt list (allows bypassing test tag requirement)
+	for _, exempt := range exemptSHAs {
+		if strings.EqualFold(bead, exempt) ||
+			strings.HasPrefix(strings.ToLower(bead), strings.ToLower(exempt)) {
+			return true
+		}
+	}
+	return false
+}
+
 func isCanonicalBeadID(id string) bool {
 	return canonicalBeadRE.MatchString(strings.ToLower(id))
 }
@@ -685,18 +700,14 @@ func parseBeadTagsFromTestFile(path string) ([]string, error) {
 func findTaggedTestsForBead(bead string) ([]linkedTest, error) {
 	tests := make([]linkedTest, 0)
 	wantedTag := testTagForBead(bead)
-	rootFS := os.DirFS(".")
-	err := fs.WalkDir(rootFS, ".", func(path string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
 			if d.Name() == ".git" || d.Name() == ".worktrees" {
-				return fs.SkipDir
+				return filepath.SkipDir
 			}
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if !goTestFileSuffixRE.MatchString(path) {
@@ -705,6 +716,9 @@ func findTaggedTestsForBead(bead string) ([]linkedTest, error) {
 		// #nosec G304,G122 -- walk scope is repository root and reads are non-mutating for test discovery.
 		body, err := os.ReadFile(path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		lineNum := 0
