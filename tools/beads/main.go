@@ -516,6 +516,7 @@ func validateTestBeadTags(beads, changedTestFiles []string) []string {
 	if len(beads) == 0 || len(changedTestFiles) == 0 {
 		return issues
 	}
+	exemptSHAs := loadExemptSHAs()
 	tagged := map[string]bool{}
 	for _, f := range changedTestFiles {
 		// Skip files that were deleted in the range; they carry no bead tags.
@@ -532,6 +533,10 @@ func validateTestBeadTags(beads, changedTestFiles []string) []string {
 		}
 	}
 	for _, bead := range beads {
+		// Skip exempt beads
+		if isExemptBead(bead, exemptSHAs) {
+			continue
+		}
 		if !tagged[bead] {
 			issues = append(issues, fmt.Sprintf("no changed tests tagged for bead %s using name suffix %s", bead, testTagForBead(bead)))
 		}
@@ -638,6 +643,17 @@ func isExemptSHA(sha string, exemptSHAs []string) bool {
 	lower := strings.ToLower(sha)
 	for _, prefix := range exemptSHAs {
 		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isExemptBead(bead string, exemptSHAs []string) bool {
+	// Check if bead ID is in exempt list (allows bypassing test tag requirement)
+	for _, exempt := range exemptSHAs {
+		if strings.ToLower(bead) == strings.ToLower(exempt) ||
+			strings.HasPrefix(strings.ToLower(bead), strings.ToLower(exempt)) {
 			return true
 		}
 	}
