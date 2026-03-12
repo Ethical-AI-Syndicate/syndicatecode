@@ -103,7 +103,11 @@ bead-evidence:
           echo "Bead $bead: bd unavailable or not found - skipping"
           continue
         fi
-        if printf '%s' "$BEAD_STATUS" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"(closed|done)"'; then
+        STATUS=$(printf '%s' "$BEAD_STATUS" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        if [ -z "$STATUS" ]; then
+          STATUS="unknown"
+        fi
+        if [ "$STATUS" = "closed" ] || [ "$STATUS" = "done" ]; then
           echo "Bead $bead is already closed - skipping closure check"
           continue
         fi

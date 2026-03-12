@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -684,14 +685,18 @@ func parseBeadTagsFromTestFile(path string) ([]string, error) {
 func findTaggedTestsForBead(bead string) ([]linkedTest, error) {
 	tests := make([]linkedTest, 0)
 	wantedTag := testTagForBead(bead)
-	err := filepath.WalkDir(".", func(path string, d os.DirEntry, walkErr error) error {
+	rootFS := os.DirFS(".")
+	err := fs.WalkDir(rootFS, ".", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
 			if d.Name() == ".git" || d.Name() == ".worktrees" {
-				return filepath.SkipDir
+				return fs.SkipDir
 			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if !goTestFileSuffixRE.MatchString(path) {

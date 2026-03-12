@@ -189,6 +189,26 @@ func (w *telemetryResponseWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+type exportReplayResponse struct {
+	SessionID      string            `json:"session_id"`
+	Destination    string            `json:"destination"`
+	Events         []exportEvent     `json:"events"`
+	Warnings       []redactionNotice `json:"warnings,omitempty"`
+	MaterialImpact bool              `json:"material_impact"`
+}
+
+type exportEvent struct {
+	ID            string                 `json:"event_id"`
+	SessionID     string                 `json:"session_id"`
+	TurnID        string                 `json:"turn_id,omitempty"`
+	Timestamp     time.Time              `json:"timestamp"`
+	EventType     string                 `json:"event_type"`
+	Actor         string                 `json:"actor"`
+	PolicyVersion string                 `json:"policy_version,omitempty"`
+	TrustTier     string                 `json:"trust_tier,omitempty"`
+	Payload       map[string]interface{} `json:"payload,omitempty"`
+}
+
 func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -1042,8 +1062,12 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, ses
 }
 
 func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if r.Method != http.MethodGet {
-		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
+	destination := r.URL.Query().Get("destination")
+	if destination == "" {
+		destination = string(secrets.DestinationExport)
+	}
+	if destination != string(secrets.DestinationExport) {
+		http.Error(w, "destination must be export", http.StatusBadRequest)
 		return
 	}
 
@@ -1056,46 +1080,57 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
-	sess, err := s.sessionMgr.Get(r.Context(), sessionID)
-	if err != nil {
-		writeStatusError(w, http.StatusNotFound, "session not found")
-		return
-	}
-
 	events, err := s.eventStore.QueryBySession(r.Context(), sessionID)
 	if err != nil {
-		writeStatusError(w, http.StatusInternalServerError, err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(events) == 0 {
+		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
 
 	policy := secrets.NewPolicyExecutor(nil)
-	redactedCount := 0
-	redactionReasons := make([]string, 0)
-	filtered := make([]audit.Event, 0, len(events))
-	for _, e := range events {
-		sanitized, eventRedactionReasons, eventRedacted, sanitizeErr := redactEventForExport(e, policy)
-		if sanitizeErr != nil {
-			writeStatusError(w, http.StatusInternalServerError, sanitizeErr.Error())
-			return
+	filteredEvents := make([]exportEvent, 0, len(events))
+	warnings := make([]redactionNotice, 0)
+	for idx, event := range events {
+		filteredEvent := exportEvent{
+			ID:            event.ID,
+			SessionID:     event.SessionID,
+			TurnID:        event.TurnID,
+			Timestamp:     event.Timestamp,
+			EventType:     event.EventType,
+			Actor:         event.Actor,
+			PolicyVersion: event.PolicyVersion,
+			TrustTier:     event.TrustTier,
 		}
-		if eventRedacted {
-			redactedCount++
+
+		if len(event.Payload) > 0 {
+			var payload map[string]interface{}
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				http.Error(w, "failed to decode event payload", http.StatusInternalServerError)
+				return
+			}
+			sanitizedPayload, payloadNotices := applyRedactionPolicyWithNotices(
+				policy,
+				fmt.Sprintf("events[%d].payload", idx),
+				"event_payload",
+				secrets.DestinationExport,
+				payload,
+			)
+			filteredEvent.Payload = sanitizedPayload
+			warnings = append(warnings, payloadNotices...)
 		}
-		redactionReasons = append(redactionReasons, eventRedactionReasons...)
-		filtered = append(filtered, sanitized)
+
+		filteredEvents = append(filteredEvents, filteredEvent)
 	}
 
-	redactionReason := summarizeRedactionReasons(redactionReasons)
-
-	export := map[string]interface{}{
-		"schema_version": "1",
-		"exported_at":    time.Now().UTC().Format(time.RFC3339),
-		"session":        sess,
-		"events":         filtered,
-		"redaction_summary": map[string]interface{}{
-			"redacted_count": redactedCount,
-			"reason":         redactionReason,
-		},
+	resp := exportReplayResponse{
+		SessionID:      sessionID,
+		Destination:    destination,
+		Events:         filteredEvents,
+		Warnings:       warnings,
+		MaterialImpact: hasMaterialImpact(warnings),
 	}
 
 	if includeArtifacts {
@@ -1104,11 +1139,22 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request, ses
 			writeStatusError(w, http.StatusInternalServerError, artifactErr.Error())
 			return
 		}
-		export["artifacts"] = artifacts
+		// Encode with artifacts as an extension to the standard response.
+		type exportReplayResponseWithArtifacts struct {
+			exportReplayResponse
+			Artifacts []audit.ArtifactRecord `json:"artifacts,omitempty"`
+		}
+		if err := json.NewEncoder(w).Encode(exportReplayResponseWithArtifacts{
+			exportReplayResponse: resp,
+			Artifacts:            artifacts,
+		}); err != nil {
+			log.Printf("failed to encode session export: %v", err)
+		}
+		return
 	}
 
-	if err := json.NewEncoder(w).Encode(export); err != nil {
-		log.Printf("failed to encode export: %v", err)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("failed to encode session export: %v", err)
 	}
 }
 
@@ -1126,67 +1172,6 @@ func parseIncludeArtifactsParam(raw string) (bool, error) {
 	return include, nil
 }
 
-func redactEventForExport(event audit.Event, policy *secrets.PolicyExecutor) (audit.Event, []string, bool, error) {
-	if event.EventType == audit.EventToolRedaction {
-		return audit.Event{
-			ID:        event.ID,
-			Timestamp: event.Timestamp,
-			EventType: "[redacted]",
-		}, []string{"tool_output_redaction markers inserted"}, true, nil
-	}
-
-	if len(event.Payload) == 0 || string(event.Payload) == "null" {
-		return event, nil, false, nil
-	}
-
-	var payload interface{}
-	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return audit.Event{}, nil, false, fmt.Errorf("failed to decode event payload for export redaction: %w", err)
-	}
-
-	sanitizedPayload, notices := applyRedactionToValue(policy, "events.payload", "event_payload", secrets.DestinationExport, payload)
-	if len(notices) == 0 {
-		return event, nil, false, nil
-	}
-
-	encodedPayload, err := json.Marshal(sanitizedPayload)
-	if err != nil {
-		return audit.Event{}, nil, false, fmt.Errorf("failed to encode redacted event payload: %w", err)
-	}
-
-	reasons := make([]string, 0, len(notices))
-	for _, notice := range notices {
-		reasons = append(reasons, notice.Reason)
-	}
-
-	event.Payload = encodedPayload
-	return event, reasons, true, nil
-}
-
-func summarizeRedactionReasons(reasons []string) string {
-	if len(reasons) == 0 {
-		return ""
-	}
-
-	unique := make(map[string]struct{}, len(reasons))
-	for _, reason := range reasons {
-		if strings.TrimSpace(reason) == "" {
-			continue
-		}
-		unique[reason] = struct{}{}
-	}
-	if len(unique) == 0 {
-		return ""
-	}
-
-	ordered := make([]string, 0, len(unique))
-	for reason := range unique {
-		ordered = append(ordered, reason)
-	}
-	sort.Strings(ordered)
-
-	return strings.Join(ordered, "; ")
-}
 
 func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

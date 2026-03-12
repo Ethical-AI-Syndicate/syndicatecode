@@ -170,3 +170,35 @@ func TestValidateChangedGoFiles_SkipsDeletedFiles_Bead_l3d_5_2(t *testing.T) {
 		}
 	}
 }
+
+func TestFindTaggedTestsForBead_SkipsSymlinkedTestFiles_Bead_l3d_1_3(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+
+	if err := os.WriteFile("good_test.go", []byte("package main\nfunc TestX_Bead_l3d_1_3(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/definitely/missing/target_test.go", "broken_test.go"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests, err := findTaggedTestsForBead("l3d.1.3")
+	if err != nil {
+		t.Fatalf("expected no error while walking test files, got %v", err)
+	}
+	if len(tests) != 1 {
+		t.Fatalf("expected exactly one linked test, got %d", len(tests))
+	}
+	if tests[0].File != "good_test.go" {
+		t.Fatalf("expected good_test.go result, got %s", tests[0].File)
+	}
+}
