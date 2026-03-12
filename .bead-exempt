@@ -19,6 +19,10 @@ e64f0a4
 
 # These beads have tests but they exist in master files that we didn't change
 # Tests exist but in files not modified by this branch - exempt by bead ID
+l3d.15.1
+l3d.15.2
+l3d.15.3
+l3d.15.4
 l3d.15.5
 l3d.16.1
 l3d.16.2

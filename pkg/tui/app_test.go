@@ -72,6 +72,40 @@ func (m *mockAPI) ListSessionEvents(ctx context.Context, sessionID, eventType st
 	return filtered, nil
 }
 
+func (m *mockAPI) ListTools(ctx context.Context) ([]ToolDefinition, error) {
+	return nil, nil
+}
+
+func (m *mockAPI) GetHealth(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{"status": "ok"}, nil
+}
+
+func (m *mockAPI) GetReadiness(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{"status": "ready"}, nil
+}
+
+func (m *mockAPI) GetMetrics(ctx context.Context) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+
+func (m *mockAPI) GetPolicyRoute(ctx context.Context, trustTier, sensitivity, task string) (PolicyDocument, error) {
+	return m.policy, nil
+}
+
+func (m *mockAPI) GetEventTypes(ctx context.Context) ([]string, error) {
+	seen := map[string]bool{}
+	for _, events := range m.replayBySess {
+		for _, ev := range events {
+			seen[ev.EventType] = true
+		}
+	}
+	types := make([]string, 0, len(seen))
+	for et := range seen {
+		types = append(types, et)
+	}
+	return types, nil
+}
+
 func TestApp_HelpAndQuit(t *testing.T) {
 	in := strings.NewReader("help\nquit\n")
 	out := &bytes.Buffer{}
