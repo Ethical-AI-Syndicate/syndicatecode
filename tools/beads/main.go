@@ -274,9 +274,14 @@ func runVerifyCommits(opts options) error {
 		return fmt.Errorf("no commits found in range %s", opts.rangeSpec)
 	}
 
+	exemptSHAs := loadExemptSHAs()
+
 	var failures []string
 	for _, c := range commits {
 		if isExemptCommitSubject(c.Subject) {
+			continue
+		}
+		if isExemptSHA(c.SHA, exemptSHAs) {
 			continue
 		}
 		beads := parseCanonicalBeads(c.Subject)
@@ -602,7 +607,41 @@ func parseMalformedBeads(input string) []string {
 
 func isExemptCommitSubject(subject string) bool {
 	trimmed := strings.TrimSpace(subject)
-	return strings.HasPrefix(trimmed, "Merge ")
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(trimmed, "Merge ") ||
+		strings.HasPrefix(lower, "merge: ") ||
+		strings.HasPrefix(lower, "merge(")
+}
+
+// loadExemptSHAs reads .bead-exempt from the repo root. Each non-empty,
+// non-comment line is a SHA prefix (min 7 chars) that bead-verify will skip.
+func loadExemptSHAs() []string {
+	data, err := os.ReadFile(".bead-exempt")
+	if err != nil {
+		return nil
+	}
+	var out []string
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if len(line) >= 7 {
+			out = append(out, strings.ToLower(line))
+		}
+	}
+	return out
+}
+
+func isExemptSHA(sha string, exemptSHAs []string) bool {
+	lower := strings.ToLower(sha)
+	for _, prefix := range exemptSHAs {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isCanonicalBeadID(id string) bool {
