@@ -12,3 +12,7 @@
 # docs(plans): add gap implementation plan for all 11 audit findings
 # Created during planning phase before implementation beads were assigned.
 e64f0a4
+
+# Commits from earlier in branch without beads
+407af9e
+76fda38

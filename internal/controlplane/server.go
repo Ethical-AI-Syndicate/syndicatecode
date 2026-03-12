@@ -66,6 +66,7 @@ type Server struct {
 	approvalMgr    *ApprovalManager
 	toolRegistry   *tools.Registry
 	toolExecutor   *tools.Executor
+	lspBroker      LSPBroker
 	bus            *streamBus
 	runner         *agent.Runner
 }
@@ -245,6 +246,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 		approvalMgr:    approvalMgr,
 		toolRegistry:   toolRegistry,
 		toolExecutor:   toolExecutor,
+		lspBroker:      NoopLSPBroker{},
 		bus:            newStreamBus(),
 	}
 
