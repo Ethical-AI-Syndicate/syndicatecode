@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
 
@@ -177,7 +178,7 @@ func TestHandleApprovalsAndDecision(t *testing.T) {
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 on approve, got %d", decisionRec.Code)
 	}
@@ -210,7 +211,7 @@ func TestHandleToolExecute_ApprovalTransitionEventsCarryCausalityPayload(t *test
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 on approve, got %d", decisionRec.Code)
 	}
@@ -310,6 +311,19 @@ func newApprovalTestServer(t *testing.T) *Server {
 		t.Fatalf("register restricted_shell failed: %v", err)
 	}
 	if err := registry.Register(tools.ToolDefinition{
+		Name:             "symbolic_shell",
+		Version:          "1",
+		TrustLevel:       "tier1",
+		SideEffect:       tools.SideEffectExecute,
+		ApprovalRequired: true,
+		InputSchema:      map[string]tools.FieldSchema{"command": {Type: "string"}},
+		OutputSchema:     map[string]tools.FieldSchema{"exit_code": {Type: "integer"}},
+		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
+	}); err != nil {
+		t.Fatalf("register symbolic_shell failed: %v", err)
+	}
+	if err := registry.Register(tools.ToolDefinition{
 		Name:             "apply_patch",
 		Version:          "1",
 		SideEffect:       tools.SideEffectWrite,
@@ -329,6 +343,9 @@ func newApprovalTestServer(t *testing.T) *Server {
 		return map[string]interface{}{"bytes_written": len(content)}, nil
 	})
 	executor.RegisterHandler("restricted_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"exit_code": 0}, nil
+	})
+	executor.RegisterHandler("symbolic_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
 		return map[string]interface{}{"exit_code": 0}, nil
 	})
 	executor.RegisterHandler("apply_patch", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
@@ -515,7 +532,7 @@ func TestHandleApprovalByID_ArgumentMutationCancelsApproval(t *testing.T) {
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 when approval arguments mutated, got %d", decisionRec.Code)
 	}
@@ -554,7 +571,7 @@ func TestHandleApprovalByID_ExecutionFailureCancelsApproval(t *testing.T) {
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 on execution failure, got %d", decisionRec.Code)
 	}
@@ -568,6 +585,177 @@ func TestHandleApprovalByID_ExecutionFailureCancelsApproval(t *testing.T) {
 	}
 	if !strings.Contains(updated.DecisionReason, "execution failed") {
 		t.Fatalf("expected execution diagnostic reason, got %q", updated.DecisionReason)
+	}
+}
+
+func TestServerRequestApproval_EnforcesTrustTierPolicyBeforePropose(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier0")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	_, err = server.RequestApproval(context.Background(), tools.ToolCall{
+		ToolName:  "restricted_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go version"},
+	})
+	if err == nil {
+		t.Fatal("expected policy denial before proposing approval")
+	}
+	if !strings.Contains(err.Error(), "policy denied") {
+		t.Fatalf("expected policy denial error, got %v", err)
+	}
+	if pending := server.approvalMgr.ListPending(sess.ID); len(pending) != 0 {
+		t.Fatalf("expected no pending approvals when policy denies, got %d", len(pending))
+	}
+}
+
+func TestServerRequestApproval_EnforcesTrustLevelVisibilityBeforePropose(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier2")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	_, err = server.RequestApproval(context.Background(), tools.ToolCall{
+		ToolName:  "symbolic_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go_test_internal"},
+	})
+	if err == nil {
+		t.Fatal("expected trust-level visibility denial before proposing approval")
+	}
+	if !strings.Contains(err.Error(), "not exposed") {
+		t.Fatalf("expected trust-level visibility denial, got %v", err)
+	}
+	if pending := server.approvalMgr.ListPending(sess.ID); len(pending) != 0 {
+		t.Fatalf("expected no pending approvals when trust-level visibility denies, got %d", len(pending))
+	}
+}
+
+func TestServerRequestApproval_AllowsTier1SymbolicShellAndRequiresApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier1")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	result, err := server.RequestApproval(context.Background(), tools.ToolCall{
+		ToolName:  "symbolic_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go_test_internal"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected request approval error: %v", err)
+	}
+	if result.Approved {
+		t.Fatal("expected symbolic_shell to require approval for tier1")
+	}
+	if result.Reason != "approval_required" {
+		t.Fatalf("expected approval_required reason, got %q", result.Reason)
+	}
+	if strings.TrimSpace(result.ApprovalID) == "" {
+		t.Fatal("expected approval id for pending symbolic_shell approval")
+	}
+	if pending := server.approvalMgr.ListPending(sess.ID); len(pending) != 1 {
+		t.Fatalf("expected one pending approval for tier1 symbolic_shell, got %d", len(pending))
+	}
+}
+
+func TestHandleApprovalByID_EnforcesTrustTierPolicyBeforeExecution(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	executed := false
+	server.toolExecutor.RegisterHandler("restricted_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		executed = true
+		return map[string]interface{}{"exit_code": 0}, nil
+	})
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier0")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	call := tools.ToolCall{
+		ToolName:  "restricted_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go version"},
+	}
+	approval, err := server.approvalMgr.Propose(sess.ID, call, tools.SideEffectExecute, nil, nil)
+	if err != nil {
+		t.Fatalf("propose approval: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
+	if decisionRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when trust-tier policy denies approved execution, got %d", decisionRec.Code)
+	}
+	if executed {
+		t.Fatal("expected approved call execution to be blocked by trust-tier policy")
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state after policy denial, got %s", updated.State)
+	}
+}
+
+func TestHandleApprovalByID_EnforcesTrustLevelVisibilityBeforeExecution(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	executed := false
+	server.toolExecutor.RegisterHandler("symbolic_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		executed = true
+		return map[string]interface{}{"exit_code": 0}, nil
+	})
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier2")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	call := tools.ToolCall{
+		ToolName:  "symbolic_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go_test_internal"},
+	}
+	approval, err := server.approvalMgr.Propose(sess.ID, call, tools.SideEffectExecute, nil, nil)
+	if err != nil {
+		t.Fatalf("propose approval: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
+	if decisionRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when trust-level visibility denies approved execution, got %d", decisionRec.Code)
+	}
+	if executed {
+		t.Fatal("expected approved call execution to be blocked by trust-level visibility")
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state after trust-level visibility denial, got %s", updated.State)
 	}
 }
 

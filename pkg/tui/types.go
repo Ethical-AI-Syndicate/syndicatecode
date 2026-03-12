@@ -41,6 +41,13 @@ type ReplayEvent struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
+type ToolDefinition struct {
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	SideEffect       string `json:"side_effect"`
+	ApprovalRequired bool   `json:"approval_required"`
+}
+
 type PolicyDocument map[string]interface{}
 
 type CreateSessionRequest struct {

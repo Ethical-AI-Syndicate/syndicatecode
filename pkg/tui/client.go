@@ -97,6 +97,56 @@ func (c *APIClient) ListSessionEvents(ctx context.Context, sessionID, eventType 
 	return events, nil
 }
 
+func (c *APIClient) ListTools(ctx context.Context) ([]ToolDefinition, error) {
+	var tools []ToolDefinition
+	if err := c.doJSON(ctx, http.MethodGet, "/tools", nil, &tools); err != nil {
+		return nil, err
+	}
+	return tools, nil
+}
+
+func (c *APIClient) GetHealth(ctx context.Context) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := c.doJSON(ctx, http.MethodGet, "/health", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetReadiness(ctx context.Context) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := c.doJSON(ctx, http.MethodGet, "/readiness", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetMetrics(ctx context.Context) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := c.doJSON(ctx, http.MethodGet, "/metrics", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetPolicyRoute(ctx context.Context, trustTier, sensitivity, task string) (PolicyDocument, error) {
+	path := fmt.Sprintf("/policy?trust_tier=%s&sensitivity=%s&task=%s",
+		url.QueryEscape(trustTier), url.QueryEscape(sensitivity), url.QueryEscape(task))
+	var result PolicyDocument
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetEventTypes(ctx context.Context) ([]string, error) {
+	var result []string
+	if err := c.doJSON(ctx, http.MethodGet, "/events/types", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in interface{}, out interface{}) error {
 	var body io.Reader
 	if in != nil {

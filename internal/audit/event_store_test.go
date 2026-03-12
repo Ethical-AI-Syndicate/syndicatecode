@@ -104,6 +104,23 @@ func TestEventStore_MigrateBootstrapsLegacySchema(t *testing.T) {
 	if maxVersion != 1 {
 		t.Fatalf("expected max schema version 1 after bootstrap, got %d", maxVersion)
 	}
+
+	for _, column := range []string{"turn_id", "policy_version", "trust_tier"} {
+		if !tableColumnExists(t, store, "events", column) {
+			t.Fatalf("expected events.%s column to exist after migration", column)
+		}
+	}
+
+	if !schemaObjectExists(t, store, "index", "idx_events_turn") {
+		t.Fatal("expected idx_events_turn index to exist after migration")
+	}
+}
+
+// TestLegacyMigrationBootstrap_Bead_l3d_X_2 is the bead-tagged conformance entry point
+// for l3d.x.2 (legacy events schema bootstrap and backfill ordering).
+func TestLegacyMigrationBootstrap_Bead_l3d_X_2(t *testing.T) {
+	t.Parallel()
+	t.Run("migrate bootstraps legacy schema", TestEventStore_MigrateBootstrapsLegacySchema)
 }
 
 func TestEventStore_PingAndSchemaVersion(t *testing.T) {
@@ -439,6 +456,40 @@ func schemaObjectExists(t *testing.T, store *EventStore, objectType, name string
 	}
 
 	return exists == 1
+}
+
+func tableColumnExists(t *testing.T, store *EventStore, table, column string) bool {
+	t.Helper()
+
+	rows, err := store.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		t.Fatalf("failed to query table_info for %s: %v", table, err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Fatalf("failed to close table_info rows for %s: %v", table, err)
+		}
+	}()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("failed to scan table_info row for %s: %v", table, err)
+		}
+		if name == column {
+			return true
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatalf("failed iterating table_info rows for %s: %v", table, err)
+	}
+
+	return false
 }
 
 func TestEventStore_QueryByTurnFiltersCorrectly(t *testing.T) {
