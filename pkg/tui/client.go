@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -41,9 +42,10 @@ func (c *APIClient) CreateSession(ctx context.Context, req CreateSessionRequest)
 	return &session, nil
 }
 
-func (c *APIClient) CreateTurn(ctx context.Context, req CreateTurnRequest) (*Turn, error) {
+func (c *APIClient) CreateTurn(ctx context.Context, sessionID string, req CreateTurnRequest) (*Turn, error) {
 	var turn Turn
-	if err := c.doJSON(ctx, http.MethodPost, "/turns", req, &turn); err != nil {
+	path := fmt.Sprintf("/sessions/%s/turns", sessionID)
+	if err := c.doJSON(ctx, http.MethodPost, path, req, &turn); err != nil {
 		return nil, err
 	}
 	return &turn, nil
@@ -66,13 +68,83 @@ func (c *APIClient) DecideApproval(ctx context.Context, approvalID string, req D
 	return &approval, nil
 }
 
-func (c *APIClient) GetTurnContext(ctx context.Context, turnID string) ([]ContextFragment, error) {
+func (c *APIClient) GetTurnContext(ctx context.Context, sessionID, turnID string) ([]ContextFragment, error) {
 	var fragments []ContextFragment
-	path := fmt.Sprintf("/turns/%s/context", turnID)
+	path := fmt.Sprintf("/sessions/%s/turns/%s/context", sessionID, turnID)
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &fragments); err != nil {
 		return nil, err
 	}
 	return fragments, nil
+}
+
+func (c *APIClient) GetPolicy(ctx context.Context) (PolicyDocument, error) {
+	var policy PolicyDocument
+	if err := c.doJSON(ctx, http.MethodGet, "/policy", nil, &policy); err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
+func (c *APIClient) ListSessionEvents(ctx context.Context, sessionID, eventType string) ([]ReplayEvent, error) {
+	var events []ReplayEvent
+	path := fmt.Sprintf("/sessions/%s/events", sessionID)
+	if eventType != "" {
+		path += "?event_type=" + url.QueryEscape(eventType)
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func (c *APIClient) ListTools(ctx context.Context) ([]ToolDefinition, error) {
+	var tools []ToolDefinition
+	if err := c.doJSON(ctx, http.MethodGet, "/tools", nil, &tools); err != nil {
+		return nil, err
+	}
+	return tools, nil
+}
+
+func (c *APIClient) GetHealth(ctx context.Context) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := c.doJSON(ctx, http.MethodGet, "/health", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetReadiness(ctx context.Context) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := c.doJSON(ctx, http.MethodGet, "/readiness", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetMetrics(ctx context.Context) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := c.doJSON(ctx, http.MethodGet, "/metrics", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetPolicyRoute(ctx context.Context, trustTier, sensitivity, task string) (PolicyDocument, error) {
+	path := fmt.Sprintf("/policy?trust_tier=%s&sensitivity=%s&task=%s",
+		url.QueryEscape(trustTier), url.QueryEscape(sensitivity), url.QueryEscape(task))
+	var result PolicyDocument
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *APIClient) GetEventTypes(ctx context.Context) ([]string, error) {
+	var result []string
+	if err := c.doJSON(ctx, http.MethodGet, "/events/types", nil, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in interface{}, out interface{}) error {

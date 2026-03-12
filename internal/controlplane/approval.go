@@ -32,18 +32,19 @@ var (
 )
 
 type Approval struct {
-	ID             string           `json:"approval_id"`
-	SessionID      string           `json:"session_id,omitempty"`
-	ToolName       string           `json:"tool_name"`
-	ArgumentsHash  string           `json:"arguments_hash"`
-	SideEffect     tools.SideEffect `json:"side_effect"`
-	AffectedPaths  []string         `json:"paths,omitempty"`
-	State          ApprovalState    `json:"state"`
-	DecisionReason string           `json:"decision_reason,omitempty"`
-	CreatedAt      time.Time        `json:"created_at"`
-	UpdatedAt      time.Time        `json:"updated_at"`
-	ExpiresAt      time.Time        `json:"expires_at"`
-	Call           tools.ToolCall   `json:"call"`
+	ID               string           `json:"approval_id"`
+	SessionID        string           `json:"session_id,omitempty"`
+	ToolName         string           `json:"tool_name"`
+	ArgumentsHash    string           `json:"arguments_hash"`
+	SideEffect       tools.SideEffect `json:"side_effect"`
+	AffectedPaths    []string         `json:"paths,omitempty"`
+	State            ApprovalState    `json:"state"`
+	DecisionReason   string           `json:"decision_reason,omitempty"`
+	CreatedAt        time.Time        `json:"created_at"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+	ExpiresAt        time.Time        `json:"expires_at"`
+	Call             tools.ToolCall   `json:"call"`
+	ExecutionContext json.RawMessage  `json:"execution_context,omitempty"`
 }
 
 type ApprovalTransition struct {
@@ -94,7 +95,7 @@ func NewApprovalManager(expiry time.Duration, options ...ApprovalManagerOption) 
 	return manager
 }
 
-func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEffect tools.SideEffect, paths []string) (*Approval, error) {
+func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEffect tools.SideEffect, paths []string, execCtx json.RawMessage) (*Approval, error) {
 	if call.ToolName == "" {
 		return nil, errors.New("tool name is required")
 	}
@@ -106,17 +107,18 @@ func (m *ApprovalManager) Propose(sessionID string, call tools.ToolCall, sideEff
 
 	now := time.Now().UTC()
 	approval := &Approval{
-		ID:            fmt.Sprintf("apr-%d", now.UnixNano()),
-		SessionID:     sessionID,
-		ToolName:      call.ToolName,
-		ArgumentsHash: hash,
-		SideEffect:    sideEffect,
-		AffectedPaths: append([]string(nil), paths...),
-		State:         ApprovalStatePending,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		ExpiresAt:     now.Add(m.expiry),
-		Call:          call,
+		ID:               fmt.Sprintf("apr-%d", now.UnixNano()),
+		SessionID:        sessionID,
+		ToolName:         call.ToolName,
+		ArgumentsHash:    hash,
+		SideEffect:       sideEffect,
+		AffectedPaths:    append([]string(nil), paths...),
+		State:            ApprovalStatePending,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		ExpiresAt:        now.Add(m.expiry),
+		Call:             call,
+		ExecutionContext: execCtx,
 	}
 
 	m.mu.Lock()
@@ -179,8 +181,11 @@ func (m *ApprovalManager) Decide(id, decision, reason string) (*Approval, error)
 		return nil, ErrInvalidApprovalState
 	}
 	if now.After(approval.ExpiresAt) {
+		fromState := approval.State
 		approval.State = ApprovalStateCancelled
+		approval.DecisionReason = "approval expired before decision"
 		approval.UpdatedAt = now
+		m.recordTransition(approval, fromState, ApprovalStateCancelled, "expired", "", approval.DecisionReason, now)
 		return nil, ErrApprovalExpired
 	}
 
@@ -230,6 +235,35 @@ func (m *ApprovalManager) MarkExecuted(id string) error {
 	approval.UpdatedAt = now
 	m.recordTransition(approval, fromState, ApprovalStateExecuted, "approved_execution", "approve", approval.DecisionReason, now)
 	return nil
+}
+
+func (m *ApprovalManager) Cancel(id, reason, trigger string) (*Approval, error) {
+	now := time.Now().UTC()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	approval, ok := m.items[id]
+	if !ok {
+		return nil, ErrApprovalNotFound
+	}
+
+	if err := state.ValidateApprovalTransition(approval.State, ApprovalStateCancelled); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidApprovalState, err)
+	}
+
+	fromState := approval.State
+	approval.State = ApprovalStateCancelled
+	approval.DecisionReason = reason
+	approval.UpdatedAt = now
+
+	if trigger == "" {
+		trigger = "cancelled"
+	}
+	m.recordTransition(approval, fromState, ApprovalStateCancelled, trigger, "", reason, now)
+
+	copy := *approval
+	return &copy, nil
 }
 
 func (m *ApprovalManager) Snapshot() []Approval {

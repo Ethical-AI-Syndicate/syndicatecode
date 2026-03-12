@@ -3,7 +3,7 @@ package validation
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -34,8 +34,23 @@ func TestDefaultPackageBoundarySpecDefinesAllowedDependencies(t *testing.T) {
 
 	spec := DefaultPackageBoundarySpec()
 	cp := spec.Packages["internal/controlplane"]
-	if len(cp.AllowedImports) == 0 {
-		t.Fatalf("expected controlplane to define allowed imports")
+	requiredImports := []string{"internal/context", "internal/session"}
+	for _, requiredImport := range requiredImports {
+		if !slices.Contains(cp.AllowedImports, requiredImport) {
+			t.Fatalf("expected controlplane allowed imports to include %q", requiredImport)
+		}
+	}
+}
+
+func TestDefaultPackageBoundarySpecIncludesAgentAndTrust_Bead_l3d_X_2(t *testing.T) {
+	t.Parallel()
+
+	spec := DefaultPackageBoundarySpec()
+	if _, ok := spec.Packages["internal/agent"]; !ok {
+		t.Fatal("missing boundary for internal/agent")
+	}
+	if _, ok := spec.Packages["internal/trust"]; !ok {
+		t.Fatal("missing boundary for internal/trust")
 	}
 }
 
@@ -83,7 +98,8 @@ func mustListFirstPartyPackages(t *testing.T, moduleRoot string) []string {
 		t.Fatalf("failed to list first-party packages: %v", err)
 	}
 
-	prefix := "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/"
+	modulePath := mustModulePathFromGoMod(t, moduleRoot)
+	prefix := modulePath + "/"
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	packages := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -91,9 +107,36 @@ func mustListFirstPartyPackages(t *testing.T, moduleRoot string) []string {
 			continue
 		}
 		pkg := strings.TrimPrefix(strings.TrimSpace(line), prefix)
-		pkg = filepath.ToSlash(pkg)
 		packages = append(packages, pkg)
 	}
 
 	return packages
+}
+
+func mustModulePathFromGoMod(t *testing.T, moduleRoot string) string {
+	t.Helper()
+
+	goModPath := moduleRoot + "/go.mod"
+	contents, err := os.ReadFile(goModPath)
+	if err != nil {
+		t.Fatalf("failed to read go.mod: %v", err)
+	}
+
+	for _, line := range strings.Split(string(contents), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "module ") {
+			modulePath := strings.TrimSpace(strings.TrimPrefix(trimmed, "module "))
+			modulePath = strings.Trim(modulePath, "\"")
+			if modulePath == "" {
+				break
+			}
+			return modulePath
+		}
+	}
+
+	t.Fatalf("failed to parse module path from go.mod at %s", goModPath)
+	return ""
 }

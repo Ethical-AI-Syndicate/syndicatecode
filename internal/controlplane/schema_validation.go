@@ -38,6 +38,8 @@ type schemaErrorPayload struct {
 	Violations []schemaViolation `json:"violations"`
 }
 
+type responseSchemaByStatus map[string]map[int]jsonObjectSchema
+
 func schemaValidationMiddleware(requestSchemas, responseSchemas map[string]jsonObjectSchema, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if reqSchema, ok := requestSchemas[r.Method]; ok {
@@ -88,6 +90,106 @@ func sessionsCreateRequestSchema() jsonObjectSchema {
 
 func sessionsCreateResponseSchema() jsonObjectSchema {
 	return mustSchemaFromRegistry(validation.ContractAPISessionCreateResponse)
+}
+
+func turnsCreateRequestSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPITurnCreateRequest)
+}
+
+func turnsCreateResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPITurnCreateResponse)
+}
+
+func sessionTurnsCreateRequestSchema() jsonObjectSchema {
+	return turnsCreateRequestSchema()
+}
+
+func toolsExecuteRequestSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPIToolExecuteRequest)
+}
+
+func toolsExecuteResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPIToolExecuteResponse)
+}
+
+func healthResponseSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func readinessResponseSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func metricsResponseSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func approvalsDecisionRequestSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func approvalsDecisionResponseSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func policyResponseSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func toolsListResponseSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func approvalRecordSchema() jsonObjectSchema {
+	return jsonObjectSchema{}
+}
+
+func schemaValidationMiddlewareWithStatus(requestSchemas, responseSchemas map[string]jsonObjectSchema, responseSchemasByStatus responseSchemaByStatus, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reqSchema, ok := requestSchemas[r.Method]; ok {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				writeSchemaError(w, http.StatusBadRequest, []schemaViolation{{Field: "body", Message: fmt.Sprintf("failed to read request body: %v", err)}})
+				return
+			}
+			violations := validateJSONObject(body, reqSchema)
+			if len(violations) > 0 {
+				writeSchemaError(w, http.StatusBadRequest, violations)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+
+		capture := newCaptureResponseWriter()
+		next.ServeHTTP(capture, r)
+
+		statusCode := capture.statusCode
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+		if statusCode >= http.StatusBadRequest {
+			writeCapturedResponse(w, capture, statusCode)
+			return
+		}
+
+		respSchema, hasMethodSchema := responseSchemas[r.Method]
+		if byStatus, ok := responseSchemasByStatus[r.Method]; ok {
+			if statusSchema, ok := byStatus[statusCode]; ok {
+				respSchema = statusSchema
+				hasMethodSchema = true
+			}
+		}
+
+		if hasMethodSchema {
+			violations := validateJSONObject(capture.body.Bytes(), respSchema)
+			if len(violations) > 0 {
+				writeSchemaError(w, http.StatusInternalServerError, violations)
+				return
+			}
+		}
+
+		writeCapturedResponse(w, capture, statusCode)
+	})
 }
 
 func mustSchemaFromRegistry(contractID string) jsonObjectSchema {

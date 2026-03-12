@@ -1,0 +1,125 @@
+{
+  "bead_id": "l3d.1.4",
+  "bead_issue_id": "SyndicateCode-l3d.1.4",
+  "bead_issue_status": "open",
+  "generated_at_utc": "2026-03-09T19:57:45Z",
+  "generator_version": "v2",
+  "head_sha": "bdb61e66f2edbf9924d738f4be70cbe218160e08",
+  "range": "origin/master..HEAD",
+  "commits": [
+    {
+      "sha": "0033c7533114991f5f1d67a3f3d01a805cfe9a9b",
+      "subject": "bd:l3d.1.4 satisfy bead suffix test linkage [l3d.1.4]",
+      "beads": [
+        "l3d.1.4"
+      ]
+    },
+    {
+      "sha": "09c8e4c4ef0debf9a040d9829986a02e7f18a0d3",
+      "subject": "bd:l3d.1.4 align bead-tagged tests with verifier requirements [l3d.1.4]",
+      "beads": [
+        "l3d.1.4"
+      ]
+    },
+    {
+      "sha": "9315264933aed17113a05b2a894c2caac5654b1c",
+      "subject": "bd:l3d.1.4 enforce single active mutable turn gate [l3d.1.4]",
+      "beads": [
+        "l3d.1.4"
+      ]
+    }
+  ],
+  "changed_files": [
+    "bead-evidence/l3d.1.json",
+    "bead-evidence/l3d.10.4.json",
+    "bead-evidence/l3d.2.1.json",
+    "bead-evidence/l3d.2.3.json",
+    "bead-evidence/l3d.6.1.json",
+    "bead-evidence/l3d.6.2.json",
+    "internal/context/context.go",
+    "internal/context/context_test.go",
+    "internal/controlplane/error_envelope.go",
+    "internal/controlplane/error_envelope_test.go",
+    "internal/controlplane/server.go",
+    "internal/controlplane/server_test.go",
+    "internal/controlplane/startup_restore.go",
+    "internal/controlplane/startup_restore_test.go",
+    "internal/controlplane/turns_api_test.go",
+    "internal/patch/proposal.go",
+    "internal/patch/proposal_test.go",
+    "internal/patch/validator.go",
+    "internal/patch/validator_test.go",
+    "pkg/tui/app.go",
+    "pkg/tui/app_test.go",
+    "pkg/tui/client.go",
+    "tools/beads/main.go",
+    "tools/beads/main_test.go",
+    "tools/verify/main.go"
+  ],
+  "changed_go_files": [
+    "internal/context/context.go",
+    "internal/controlplane/error_envelope.go",
+    "internal/controlplane/server.go",
+    "internal/controlplane/startup_restore.go",
+    "internal/patch/proposal.go",
+    "internal/patch/validator.go",
+    "pkg/tui/app.go",
+    "pkg/tui/client.go",
+    "tools/beads/main.go",
+    "tools/verify/main.go"
+  ],
+  "changed_test_files": [
+    "internal/context/context_test.go",
+    "internal/controlplane/error_envelope_test.go",
+    "internal/controlplane/server_test.go",
+    "internal/controlplane/startup_restore_test.go",
+    "internal/controlplane/turns_api_test.go",
+    "internal/patch/proposal_test.go",
+    "internal/patch/validator_test.go",
+    "pkg/tui/app_test.go",
+    "tools/beads/main_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/context/context_test.go",
+      "line": 280,
+      "test_name": "TestTurnManager_RejectsSecondActiveMutableTurn_Bead_l3d_1_4",
+      "beads": [
+        "l3d.1.4"
+      ]
+    },
+    {
+      "file": "internal/context/context_test.go",
+      "line": 326,
+      "test_name": "TestTurnManager_AllowsNewTurnAfterTerminalTransition_Bead_l3d_1_4",
+      "beads": [
+        "l3d.1.4"
+      ]
+    },
+    {
+      "file": "internal/controlplane/server_test.go",
+      "line": 16,
+      "test_name": "TestCreateTurn_RejectsConcurrentMutableTurnsAndPreservesReadOnlyAccess_Bead_l3d_1_4",
+      "beads": [
+        "l3d.1.4"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": true,
+    "reasons": null
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}

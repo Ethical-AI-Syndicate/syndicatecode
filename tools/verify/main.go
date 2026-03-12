@@ -44,7 +44,7 @@ type CommandRunner interface {
 type ShellRunner struct{}
 
 func (s ShellRunner) Run(command string) CommandResult {
-	// #nosec G204 -- command strings are assembled internally from fixed verifier phases.
+	// #nosec G204 -- verification runner executes repository-defined commands only.
 	cmd := exec.Command("bash", "-lc", command)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
