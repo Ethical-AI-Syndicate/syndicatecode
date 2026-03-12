@@ -28,6 +28,14 @@ sequentially-gated phases.
 | 10 | WebSocket stream not session-scoped | Low |
 | 11 | No session export endpoint | Low |
 
+### Implementation Markers (2026-03-12 Reconciliation)
+
+| Gap | Marker | Evidence |
+|-----|--------|----------|
+| 10 | Implemented | `internal/controlplane/server.go` (`handleEventStream`, `streamNewEvents`) + `internal/controlplane/event_stream_test.go` |
+| 11 | Implemented | `internal/controlplane/server.go` (`handleSessionExport`, `parseIncludeArtifactsParam`) + `internal/controlplane/replay_test.go` |
+| 5, 6, 7, 9 | Pending marker update in this document | No additional reconciliation changes in this pass |
+
 ---
 
 ## Design Decisions
@@ -198,14 +206,14 @@ Wired in server from `internal/trust/` policy (not hardcoded in agent):
 
 ### 2c. Streaming Infrastructure
 
-#### WebSocket Session Scoping
+#### WebSocket Session Scoping [Implemented]
 
 Fix GAP 10 as a prerequisite:
 - `GET /api/v1/events/stream?session_id=<id>` — `session_id` becomes required
 - `streamNewEvents()` filters event store queries by session ID
 - Missing `session_id` returns `400 Bad Request`
 
-#### In-Memory Stream Bus
+#### In-Memory Stream Bus [Implemented]
 
 ```go
 type streamBus struct {
@@ -275,7 +283,7 @@ When `diff` or `replay` output contains `file_mutation` events:
 - Implemented as `renderFileMutation(event audit.Event) string` in `pkg/tui/app.go`
 - No new dependencies
 
-### 3d. Session Export Endpoint
+### 3d. Session Export Endpoint [Implemented]
 
 ```
 GET /api/v1/sessions/{id}/export
@@ -296,6 +304,12 @@ Safety controls (V1 go/no-go #8):
 - Events pass through `contextRedactionPolicy` before inclusion
 - `EventToolRedaction` events replaced with redaction markers
 - Artifacts excluded by default; `?include_artifacts=true` requires operator role
+
+Reconciled implementation evidence:
+- `internal/controlplane/server.go`: `handleSessionExport` parses `include_artifacts`
+  and gates artifact inclusion behind operator role enforcement.
+- `internal/controlplane/replay_test.go`: explicit coverage for non-operator `403` and
+  operator `200` artifact export behavior.
 
 ### 3e. Per-Turn Reliability Limits
 

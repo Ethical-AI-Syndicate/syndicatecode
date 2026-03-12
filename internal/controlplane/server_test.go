@@ -32,7 +32,8 @@ func TestCreateTurn_RejectsConcurrentMutableTurnsAndPreservesReadOnlyAccess_Bead
 
 	first := httptest.NewRecorder()
 	firstBody := bytes.NewBufferString(`{"session_id":"` + sess.ID + `","message":"first"}`)
-	server.createTurn(first, httptest.NewRequest(http.MethodPost, "/api/v1/turns", firstBody))
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/v1/turns", firstBody)
+	server.createTurn(first, withOperatorRole(firstReq))
 	if first.Code != http.StatusCreated {
 		t.Fatalf("expected first create status %d, got %d", http.StatusCreated, first.Code)
 	}
@@ -49,7 +50,8 @@ func TestCreateTurn_RejectsConcurrentMutableTurnsAndPreservesReadOnlyAccess_Bead
 
 	second := httptest.NewRecorder()
 	secondBody := bytes.NewBufferString(`{"session_id":"` + sess.ID + `","message":"second"}`)
-	server.createTurn(second, httptest.NewRequest(http.MethodPost, "/api/v1/turns", secondBody))
+	secondReq := httptest.NewRequest(http.MethodPost, "/api/v1/turns", secondBody)
+	server.createTurn(second, withOperatorRole(secondReq))
 	if second.Code != http.StatusConflict {
 		t.Fatalf("expected second create status %d, got %d", http.StatusConflict, second.Code)
 	}

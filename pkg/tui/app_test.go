@@ -277,3 +277,92 @@ func TestApp_ReplayModeIsReadOnly_Bead_l3d_12_4(t *testing.T) {
 		t.Fatalf("expected ordered replay output, got %q", content)
 	}
 }
+
+func TestRenderFileMutation_RendersUnifiedDiffFromPatch_Bead_l3d_X_1(t *testing.T) {
+	event := ReplayEvent{
+		EventType: "file_mutation",
+		Payload:   []byte(`{"path":"internal/foo/bar.go","type":"update","before_hash":"abc","after_hash":"def","patch":"--- a/internal/foo/bar.go\n+++ b/internal/foo/bar.go\n@@ -1,1 +1,1 @@\n-old\n+new"}`),
+	}
+	app := NewApp(nil, nil, nil)
+	out := app.renderFileMutation(event)
+	if !strings.Contains(out, "~ internal/foo/bar.go (update)") {
+		t.Errorf("expected mutation header in output, got %q", out)
+	}
+	if !strings.Contains(out, "--- a/internal/foo/bar.go") || !strings.Contains(out, "+++ b/internal/foo/bar.go") {
+		t.Errorf("expected unified diff file headers, got %q", out)
+	}
+	if !strings.Contains(out, "@@ -1,1 +1,1 @@") {
+		t.Errorf("expected unified diff hunk header, got %q", out)
+	}
+	if !strings.Contains(out, "\x1b[") {
+		t.Errorf("expected ANSI colorized diff output, got %q", out)
+	}
+}
+
+func TestRenderFileMutation_RendersUnifiedDiffFromHunks_Bead_l3d_X_1(t *testing.T) {
+	event := ReplayEvent{
+		EventType: "file_mutation",
+		Payload:   []byte(`{"path":"internal/foo/bar.go","type":"update","hunks":[{"old_start":10,"old_lines":2,"new_start":10,"new_lines":2,"lines":[" context","-old","+new"]}]}`),
+	}
+	app := NewApp(nil, nil, nil)
+	out := app.renderFileMutation(event)
+
+	if !strings.Contains(out, "--- a/internal/foo/bar.go") || !strings.Contains(out, "+++ b/internal/foo/bar.go") {
+		t.Errorf("expected unified diff file headers, got %q", out)
+	}
+	if !strings.Contains(out, "@@ -10,2 +10,2 @@") {
+		t.Errorf("expected unified diff hunk header, got %q", out)
+	}
+	if !strings.Contains(out, "-old") || !strings.Contains(out, "+new") {
+		t.Errorf("expected hunk lines in output, got %q", out)
+	}
+	if strings.Contains(out, "before:") || strings.Contains(out, "after:") {
+		t.Errorf("expected unified diff path, got fallback output %q", out)
+	}
+	if !strings.Contains(out, "~ internal/foo/bar.go (update)") {
+		t.Errorf("expected mutation header in output, got %q", out)
+	}
+	if strings.Count(out, "@@") != 2 {
+		t.Errorf("expected single hunk marker pair in output, got %q", out)
+	}
+}
+
+func TestRenderFileMutation_FallsBackToStructuredSummaryWhenPatchMissing_Bead_l3d_X_1(t *testing.T) {
+	event := ReplayEvent{
+		EventType: "file_mutation",
+		Payload:   []byte(`{"path":"internal/foo/bar.go","type":"update","before_hash":"abc","after_hash":"def"}`),
+	}
+	app := NewApp(nil, nil, nil)
+	out := app.renderFileMutation(event)
+
+	expected := "~ internal/foo/bar.go (update) before:abc after:def"
+	if out != expected {
+		t.Errorf("expected fallback summary %q, got %q", expected, out)
+	}
+}
+
+func TestRenderFileMutation_FallsBackWhenHunksMalformed_Bead_l3d_X_1(t *testing.T) {
+	event := ReplayEvent{
+		EventType: "file_mutation",
+		Payload:   []byte(`{"path":"internal/foo/bar.go","type":"update","before_hash":"abc","after_hash":"def","hunks":[{"old_start":"bad","old_lines":1,"new_start":1,"new_lines":1,"lines":["-old","+new"]}]}`),
+	}
+	app := NewApp(nil, nil, nil)
+	out := app.renderFileMutation(event)
+
+	expected := "~ internal/foo/bar.go (update) before:abc after:def"
+	if out != expected {
+		t.Fatalf("expected fallback summary %q, got %q", expected, out)
+	}
+	if strings.Contains(out, "--- a/") || strings.Contains(out, "@@") {
+		t.Fatalf("expected no unified diff output, got %q", out)
+	}
+}
+
+func TestJSONNumberToInt_RejectsNonIntegerNumbers_Bead_l3d_X_1(t *testing.T) {
+	if _, ok := jsonNumberToInt(10.5); ok {
+		t.Fatalf("expected non-integer float to be rejected")
+	}
+	if got, ok := jsonNumberToInt(10.0); !ok || got != 10 {
+		t.Fatalf("expected integral float to be accepted, got (%d, %t)", got, ok)
+	}
+}

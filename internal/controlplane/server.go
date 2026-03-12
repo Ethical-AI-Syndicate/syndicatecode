@@ -11,13 +11,18 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/agent"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
 	ctxmgr "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/context"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/models"
+	anthropicprovider "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/models/anthropic"
+	openaiprovider "gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/models/openai"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/patch"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/policy"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/requestmeta"
@@ -61,6 +66,8 @@ type Server struct {
 	approvalMgr    *ApprovalManager
 	toolRegistry   *tools.Registry
 	toolExecutor   *tools.Executor
+	bus            *streamBus
+	runner         *agent.Runner
 }
 
 const (
@@ -99,6 +106,15 @@ type runtimeMetrics struct {
 	statusCounts      map[int]int64
 	endpointCounts    map[string]int64
 	toolExecutionBySE map[string]int64
+}
+
+type busEmitter struct{ bus *streamBus }
+
+func (b busEmitter) Emit(sessionID string, e agent.AgentEvent) {
+	if b.bus == nil {
+		return
+	}
+	b.bus.publish(sessionID, streamMessage{Type: string(e.Type), Data: e.Data})
 }
 
 func newRuntimeMetrics(now time.Time) *runtimeMetrics {
@@ -229,6 +245,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 		approvalMgr:    approvalMgr,
 		toolRegistry:   toolRegistry,
 		toolExecutor:   toolExecutor,
+		bus:            newStreamBus(),
 	}
 
 	if err := server.restoreRuntimeState(ctx); err != nil {
@@ -239,6 +256,7 @@ func NewServer(ctx context.Context, cfg *Config) (*Server, error) {
 
 	server.registerRoutes(mux)
 	server.httpServer.Handler = server.withTelemetry(mux)
+	server.initializeAgentRunner()
 
 	return server, nil
 }
@@ -407,6 +425,25 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore, sessio
 			Security: tools.SecurityMetadata{FilesystemScope: "repo"},
 		},
 		{
+			Name:             "symbolic_shell",
+			Version:          "1",
+			Description:      "Runs a named CI command from the symbolic allowlist.",
+			Source:           tools.ToolSourceCore,
+			TrustLevel:       "tier1",
+			SideEffect:       tools.SideEffectExecute,
+			ApprovalRequired: true,
+			InputSchema: map[string]tools.FieldSchema{
+				"command": {Type: "string", Description: "symbolic command name", Required: true},
+			},
+			OutputSchema: map[string]tools.FieldSchema{
+				"stdout":    {Type: "string", Description: "stdout"},
+				"stderr":    {Type: "string", Description: "stderr"},
+				"exit_code": {Type: "integer", Description: "exit code"},
+			},
+			Limits:   tools.ExecutionLimits{TimeoutSeconds: 300, MaxOutputBytes: 512 * 1024},
+			Security: tools.SecurityMetadata{FilesystemScope: "repo"},
+		},
+		{
 			Name:             "apply_patch",
 			Version:          "1",
 			SideEffect:       tools.SideEffectWrite,
@@ -483,6 +520,22 @@ func initializeTooling(ctx context.Context, eventStore *audit.EventStore, sessio
 		l1Runner,
 		l2Runner,
 	))
+	symExec := sandbox.NewSymbolicCommandExecutor(sandbox.DefaultSymbolicCommands())
+	executor.RegisterHandler("symbolic_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		cmd, _ := input["command"].(string)
+		if strings.TrimSpace(cmd) == "" {
+			return nil, fmt.Errorf("command is required")
+		}
+		result, err := symExec.Run(ctx, cmd, nil, sandbox.SubprocessOptions{WorkingDir: repoRoot, Timeout: 300 * time.Second, MaxOutputBytes: 512 * 1024})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"stdout":    result.Stdout,
+			"stderr":    result.Stderr,
+			"exit_code": result.ExitCode,
+		}, nil
+	})
 	executor.RegisterHandler("apply_patch", tools.ApplyPatchHandler(
 		patch.NewEngine(repoRoot),
 		func(ctx context.Context, path, mutationType, beforeHash, afterHash string) {
@@ -927,6 +980,10 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		s.handleSessionEvents(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "export" {
+		s.handleSessionExport(w, r, parts[0])
+		return
+	}
 	if len(parts) != 1 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
@@ -982,6 +1039,153 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request, ses
 	if err := json.NewEncoder(w).Encode(events); err != nil {
 		log.Printf("failed to encode session events: %v", err)
 	}
+}
+
+func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if r.Method != http.MethodGet {
+		writeStatusError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	includeArtifacts, err := parseIncludeArtifactsParam(r.URL.Query().Get("include_artifacts"))
+	if err != nil {
+		writeStatusError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if includeArtifacts && !requireOperatorRole(w, r) {
+		return
+	}
+
+	sess, err := s.sessionMgr.Get(r.Context(), sessionID)
+	if err != nil {
+		writeStatusError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	events, err := s.eventStore.QueryBySession(r.Context(), sessionID)
+	if err != nil {
+		writeStatusError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	policy := secrets.NewPolicyExecutor(nil)
+	redactedCount := 0
+	redactionReasons := make([]string, 0)
+	filtered := make([]audit.Event, 0, len(events))
+	for _, e := range events {
+		sanitized, eventRedactionReasons, eventRedacted, sanitizeErr := redactEventForExport(e, policy)
+		if sanitizeErr != nil {
+			writeStatusError(w, http.StatusInternalServerError, sanitizeErr.Error())
+			return
+		}
+		if eventRedacted {
+			redactedCount++
+		}
+		redactionReasons = append(redactionReasons, eventRedactionReasons...)
+		filtered = append(filtered, sanitized)
+	}
+
+	redactionReason := summarizeRedactionReasons(redactionReasons)
+
+	export := map[string]interface{}{
+		"schema_version": "1",
+		"exported_at":    time.Now().UTC().Format(time.RFC3339),
+		"session":        sess,
+		"events":         filtered,
+		"redaction_summary": map[string]interface{}{
+			"redacted_count": redactedCount,
+			"reason":         redactionReason,
+		},
+	}
+
+	if includeArtifacts {
+		artifacts, artifactErr := s.eventStore.ListArtifactsBySession(r.Context(), sessionID)
+		if artifactErr != nil {
+			writeStatusError(w, http.StatusInternalServerError, artifactErr.Error())
+			return
+		}
+		export["artifacts"] = artifacts
+	}
+
+	if err := json.NewEncoder(w).Encode(export); err != nil {
+		log.Printf("failed to encode export: %v", err)
+	}
+}
+
+func parseIncludeArtifactsParam(raw string) (bool, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return false, nil
+	}
+
+	include, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("include_artifacts must be true or false")
+	}
+
+	return include, nil
+}
+
+func redactEventForExport(event audit.Event, policy *secrets.PolicyExecutor) (audit.Event, []string, bool, error) {
+	if event.EventType == audit.EventToolRedaction {
+		return audit.Event{
+			ID:        event.ID,
+			Timestamp: event.Timestamp,
+			EventType: "[redacted]",
+		}, []string{"tool_output_redaction markers inserted"}, true, nil
+	}
+
+	if len(event.Payload) == 0 || string(event.Payload) == "null" {
+		return event, nil, false, nil
+	}
+
+	var payload interface{}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return audit.Event{}, nil, false, fmt.Errorf("failed to decode event payload for export redaction: %w", err)
+	}
+
+	sanitizedPayload, notices := applyRedactionToValue(policy, "events.payload", "event_payload", secrets.DestinationExport, payload)
+	if len(notices) == 0 {
+		return event, nil, false, nil
+	}
+
+	encodedPayload, err := json.Marshal(sanitizedPayload)
+	if err != nil {
+		return audit.Event{}, nil, false, fmt.Errorf("failed to encode redacted event payload: %w", err)
+	}
+
+	reasons := make([]string, 0, len(notices))
+	for _, notice := range notices {
+		reasons = append(reasons, notice.Reason)
+	}
+
+	event.Payload = encodedPayload
+	return event, reasons, true, nil
+}
+
+func summarizeRedactionReasons(reasons []string) string {
+	if len(reasons) == 0 {
+		return ""
+	}
+
+	unique := make(map[string]struct{}, len(reasons))
+	for _, reason := range reasons {
+		if strings.TrimSpace(reason) == "" {
+			continue
+		}
+		unique[reason] = struct{}{}
+	}
+	if len(unique) == 0 {
+		return ""
+	}
+
+	ordered := make([]string, 0, len(unique))
+	for reason := range unique {
+		ordered = append(ordered, reason)
+	}
+	sort.Strings(ordered)
+
+	return strings.Join(ordered, "; ")
 }
 
 func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
@@ -1135,8 +1339,26 @@ func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessi
 
 	turn, err := s.turnMgr.Create(r.Context(), sessionID, req.Message)
 	if err != nil {
+		if errors.Is(err, ctxmgr.ErrActiveMutableTurnConflict) {
+			writeStatusError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeStatusError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	if s.runner != nil {
+		sess, sessErr := s.sessionMgr.Get(r.Context(), sessionID)
+		if sessErr == nil {
+			sessionRunner := s.runner.WithConfig(agent.DefaultConfig(sess.TrustTier))
+			go s.runAgentTurn(context.Background(), sessionRunner, agent.AgentTurn{
+				ID:        turn.ID,
+				SessionID: sessionID,
+				Message:   req.Message,
+				TrustTier: sess.TrustTier,
+				Files:     req.Files,
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1144,6 +1366,91 @@ func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessi
 	if err := json.NewEncoder(w).Encode(turn); err != nil {
 		log.Printf("failed to encode turn: %v", err)
 	}
+}
+
+func (s *Server) runAgentTurn(ctx context.Context, runner *agent.Runner, turn agent.AgentTurn) {
+	s.recordModelInvocation(ctx, runner, turn)
+
+	ch, err := runner.RunTurn(ctx, turn)
+	if err != nil {
+		log.Printf("agent RunTurn error: %v", err)
+		return
+	}
+
+	for evt := range ch {
+		if s.eventStore == nil {
+			continue
+		}
+		payload, marshalErr := json.Marshal(map[string]interface{}{
+			"type":        string(evt.Type),
+			"data":        evt.Data,
+			"stop_reason": evt.StopReason,
+			"tool_id":     evt.ToolID,
+			"tool_name":   evt.ToolName,
+			"approval_id": evt.ApprovalID,
+		})
+		if marshalErr != nil {
+			continue
+		}
+		_ = s.eventStore.Append(ctx, audit.Event{
+			ID:        uuid.NewString(),
+			SessionID: turn.SessionID,
+			TurnID:    turn.ID,
+			Timestamp: time.Now().UTC(),
+			EventType: string(evt.Type),
+			Actor:     "agent",
+			Payload:   payload,
+		})
+
+		if evt.Type == agent.EventAwaitingApproval {
+			s.appendTurnLifecycleEventWithCausality(ctx, turn.SessionID, ctxmgr.TurnStatusAwaitingApproval, "agent_awaiting_approval", map[string]interface{}{
+				"approval_id": evt.ApprovalID,
+				"tool_name":   evt.ToolName,
+				"turn_id":     turn.ID,
+			})
+		}
+	}
+}
+
+func (s *Server) recordModelInvocation(ctx context.Context, runner *agent.Runner, turn agent.AgentTurn) {
+	if s == nil || s.eventStore == nil || runner == nil {
+		return
+	}
+
+	now := time.Now().UTC()
+	provider, model := runner.ModelMetadata()
+	_ = s.eventStore.EnsureSessionRecord(ctx, turn.SessionID, turn.TrustTier, now)
+	_ = s.eventStore.EnsureTurnRecord(ctx, turn.ID, turn.SessionID, now)
+
+	record := audit.ModelInvocationRecord{
+		ID:        uuid.NewString(),
+		SessionID: turn.SessionID,
+		TurnID:    turn.ID,
+		Provider:  provider,
+		Model:     model,
+		CreatedAt: now,
+	}
+	_ = s.eventStore.RecordModelInvocation(ctx, record)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"provider":   provider,
+		"model":      model,
+		"session_id": turn.SessionID,
+		"turn_id":    turn.ID,
+	})
+	if err != nil {
+		return
+	}
+
+	_ = s.eventStore.Append(ctx, audit.Event{
+		ID:        uuid.NewString(),
+		SessionID: turn.SessionID,
+		TurnID:    turn.ID,
+		Timestamp: now,
+		EventType: audit.EventModelInvoked,
+		Actor:     "agent",
+		Payload:   payload,
+	})
 }
 
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request, sessionID string) bool {
@@ -1287,8 +1594,24 @@ func (s *Server) handleApprovalByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		toolDef, toolFound := s.toolRegistry.Get(approval.Call.ToolName)
+		if toolFound {
+			if visibilityErr := s.enforceToolVisibilityForSession(r.Context(), approval.SessionID, toolDef); visibilityErr != nil {
+				_, _ = s.approvalMgr.Cancel(approvalID, fmt.Sprintf("visibility denied at execution: %v", visibilityErr), "visibility_denied")
+				s.appendTurnLifecycleEvent(r.Context(), approval.SessionID, ctxmgr.TurnStatusCancelled, "approval_execution_visibility_denied")
+				writeStatusError(w, http.StatusForbidden, visibilityErr.Error())
+				return
+			}
+			if policyErr := s.enforceTrustTierToolPolicy(r.Context(), approval.SessionID, toolDef); policyErr != nil {
+				_, _ = s.approvalMgr.Cancel(approvalID, fmt.Sprintf("policy denied at execution: %v", policyErr), "policy_denied")
+				s.appendTurnLifecycleEvent(r.Context(), approval.SessionID, ctxmgr.TurnStatusCancelled, "approval_execution_policy_denied")
+				writeStatusError(w, http.StatusForbidden, policyErr.Error())
+				return
+			}
+		}
+
 		result, execErr := s.toolExecutor.Execute(r.Context(), approval.Call)
-		if toolDef, ok := s.toolRegistry.Get(approval.Call.ToolName); ok {
+		if toolFound {
 			s.metrics.recordToolExecution(toolDef.SideEffect)
 			s.recordMCPCallEvent(r.Context(), approval.Call, toolDef, result, execErr)
 		}
@@ -1404,6 +1727,36 @@ func buildRouteEngine(providerPolicy policy.ProviderPolicy) *policy.RouteEngine 
 	return policy.NewRouteEngine(routes)
 }
 
+func (s *Server) initializeAgentRunner() {
+	if s == nil || s.toolRegistry == nil || s.toolExecutor == nil || s.approvalMgr == nil {
+		return
+	}
+
+	providerRegistry := models.NewRegistry()
+	if key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); key != "" {
+		providerRegistry.Register("anthropic", anthropicprovider.NewProvider(key))
+	}
+	if key := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); key != "" {
+		providerRegistry.Register("openai", openaiprovider.NewProvider(key))
+	}
+
+	var modelInstance models.LanguageModel
+	if resolved, err := providerRegistry.Resolve("anthropic", "claude-sonnet-4-6"); err == nil {
+		modelInstance = resolved
+	} else if resolved, err := providerRegistry.Resolve("openai", "gpt-4o"); err == nil {
+		modelInstance = resolved
+	}
+
+	if modelInstance == nil {
+		return
+	}
+
+	if s.bus == nil {
+		s.bus = newStreamBus()
+	}
+	s.runner = agent.NewRunner(modelInstance, s.toolRegistry, s.toolExecutor, s, busEmitter{bus: s.bus}, agent.DefaultConfig("tier1"))
+}
+
 func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	cursorParam := r.URL.Query().Get("cursor")
 	cursor, err := parseEventCursor(cursorParam)
@@ -1412,8 +1765,12 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := r.URL.Query().Get("session_id")
-	if sessionID != "" && s.sessionMgr != nil {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		writeStatusError(w, http.StatusBadRequest, "session_id query parameter is required")
+		return
+	}
+	if s.sessionMgr != nil {
 		if _, err := s.sessionMgr.Get(r.Context(), sessionID); err != nil {
 			writeStatusError(w, http.StatusNotFound, "session not found")
 			return
@@ -1441,6 +1798,12 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	if s.bus == nil {
+		s.bus = newStreamBus()
+	}
+	busC, busUnsub := s.bus.subscribe(sessionID)
+	defer busUnsub()
+
 	ticker := time.NewTicker(eventStreamPollInterval)
 	defer ticker.Stop()
 
@@ -1454,6 +1817,19 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		}
 
 		select {
+		case msg, ok := <-busC:
+			if !ok {
+				return
+			}
+			payload, marshalErr := json.Marshal(msg)
+			if marshalErr != nil {
+				continue
+			}
+			//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
+			if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
+				_ = conn.Close(websocket.StatusInternalError, "stream error")
+				return
+			}
 		case <-ctx.Done():
 			//nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
 			_ = conn.Close(websocket.StatusNormalClosure, "")
@@ -1461,6 +1837,34 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Server) RequestApproval(ctx context.Context, call tools.ToolCall) (agent.ApprovalResult, error) {
+	if s == nil || s.toolRegistry == nil || s.approvalMgr == nil {
+		return agent.ApprovalResult{Approved: true}, nil
+	}
+
+	toolDef, ok := s.toolRegistry.Get(call.ToolName)
+	if !ok || !toolDef.ApprovalRequired {
+		return agent.ApprovalResult{Approved: true}, nil
+	}
+	if err := s.enforceToolVisibilityForSession(ctx, call.SessionID, toolDef); err != nil {
+		return agent.ApprovalResult{}, err
+	}
+	if err := s.enforceTrustTierToolPolicy(ctx, call.SessionID, toolDef); err != nil {
+		return agent.ApprovalResult{}, err
+	}
+
+	execCtxMap := buildExecutionContext(call, toolDef)
+	execCtxBytes, _ := json.Marshal(execCtxMap)
+	approval, err := s.approvalMgr.Propose(call.SessionID, call, toolDef.SideEffect, toolDef.Limits.AllowedPaths, execCtxBytes)
+	if err != nil {
+		return agent.ApprovalResult{}, err
+	}
+	if err := s.appendApprovalEvent(ctx, audit.EventApprovalProposed, approval.SessionID, approval); err != nil {
+		return agent.ApprovalResult{}, err
+	}
+	return agent.ApprovalResult{Approved: false, Reason: "approval_required", ApprovalID: approval.ID}, nil
 }
 
 type eventStreamCursor struct {
@@ -1591,7 +1995,7 @@ func (s *Server) handleToolExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.executeToolRequest(w, r, req, toolDef)
+	s.executeToolRequest(w, r, req, toolDef, req.SessionID)
 }
 
 func decodeToolExecuteRequest(w http.ResponseWriter, r *http.Request) (tools.ExecuteRequest, bool) {
@@ -1697,12 +2101,12 @@ func (s *Server) proposeToolApproval(w http.ResponseWriter, r *http.Request, req
 	}
 }
 
-func (s *Server) executeToolRequest(w http.ResponseWriter, r *http.Request, req tools.ExecuteRequest, toolDef tools.ToolDefinition) {
+func (s *Server) executeToolRequest(w http.ResponseWriter, r *http.Request, req tools.ExecuteRequest, toolDef tools.ToolDefinition, sessionID string) {
 	s.metrics.recordToolExecution(toolDef.SideEffect)
 	result, err := s.toolExecutor.Execute(r.Context(), req)
 	s.recordMCPCallEvent(r.Context(), req, toolDef, result, err)
 	if err != nil {
-		s.appendTurnLifecycleEvent(r.Context(), req.SessionID, ctxmgr.TurnStatusFailed, "tool_execution_failed")
+		s.appendTurnLifecycleEvent(r.Context(), sessionID, ctxmgr.TurnStatusFailed, "tool_execution_failed")
 		writeStatusError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1711,7 +2115,7 @@ func (s *Server) executeToolRequest(w http.ResponseWriter, r *http.Request, req 
 	if result.Output != nil {
 		result.Output, notices = applyRedactionPolicyWithNotices(secrets.NewPolicyExecutor(nil), req.ToolName, "tool_output", secrets.DestinationUI, result.Output)
 		if len(notices) > 0 {
-			s.recordRedactionEvent(r.Context(), req.ToolName, notices)
+			s.recordRedactionEvent(r.Context(), sessionID, req.ToolName, notices)
 		}
 	}
 
@@ -1719,8 +2123,8 @@ func (s *Server) executeToolRequest(w http.ResponseWriter, r *http.Request, req 
 		log.Printf("failed to encode tool response: %v", err)
 	}
 
-	if req.SessionID != "" {
-		s.appendTurnLifecycleEvent(r.Context(), req.SessionID, ctxmgr.TurnStatusCompleted, "tool_execution_completed")
+	if sessionID != "" {
+		s.appendTurnLifecycleEvent(r.Context(), sessionID, ctxmgr.TurnStatusCompleted, "tool_execution_completed")
 	}
 }
 
@@ -1740,6 +2144,10 @@ func turnEventTypeForStatus(status ctxmgr.TurnStatus) string {
 }
 
 func (s *Server) appendTurnLifecycleEvent(ctx context.Context, sessionID string, status ctxmgr.TurnStatus, cause string) {
+	s.appendTurnLifecycleEventWithCausality(ctx, sessionID, status, cause, nil)
+}
+
+func (s *Server) appendTurnLifecycleEventWithCausality(ctx context.Context, sessionID string, status ctxmgr.TurnStatus, cause string, causality map[string]interface{}) {
 	if s.eventStore == nil || s.turnMgr == nil || sessionID == "" {
 		return
 	}
@@ -1754,7 +2162,7 @@ func (s *Server) appendTurnLifecycleEvent(ctx context.Context, sessionID string,
 		return
 	}
 
-	payload, err := json.Marshal(map[string]interface{}{
+	payloadMap := map[string]interface{}{
 		"entity_type":          "turn",
 		"entity_id":            turnID,
 		"next_state":           string(status),
@@ -1764,7 +2172,12 @@ func (s *Server) appendTurnLifecycleEvent(ctx context.Context, sessionID string,
 			"session_id": sessionID,
 			"turn_id":    turnID,
 		},
-	})
+	}
+	if len(causality) > 0 {
+		payloadMap["causality"] = causality
+	}
+
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		return
 	}
@@ -1981,7 +2394,8 @@ func responseMetadata(result *tools.ToolResult, execErr error) map[string]interf
 }
 
 func (s *Server) isToolHiddenForSession(ctx context.Context, sessionID string, toolDef tools.ToolDefinition) (bool, error) {
-	if toolDef.Source != tools.ToolSourcePlugin {
+	enforceTrustVisibility := toolDef.Source == tools.ToolSourcePlugin || strings.TrimSpace(toolDef.TrustLevel) != ""
+	if !enforceTrustVisibility {
 		return false, nil
 	}
 
@@ -1998,6 +2412,17 @@ func (s *Server) isToolHiddenForSession(ctx context.Context, sessionID string, t
 	}
 
 	return !isPluginExposedForTrustTier(sessionState.TrustTier, toolDef.TrustLevel), nil
+}
+
+func (s *Server) enforceToolVisibilityForSession(ctx context.Context, sessionID string, toolDef tools.ToolDefinition) error {
+	hidden, err := s.isToolHiddenForSession(ctx, sessionID, toolDef)
+	if err != nil {
+		return err
+	}
+	if hidden {
+		return fmt.Errorf("tool not exposed for session trust tier")
+	}
+	return nil
 }
 
 func isPluginExposedForTrustTier(sessionTrustTier, pluginTrustLevel string) bool {
@@ -2080,9 +2505,14 @@ func applyRedactionToSlice(policy *secrets.PolicyExecutor, fieldPath, sourceType
 	return output, notices
 }
 
-func (s *Server) recordRedactionEvent(ctx context.Context, toolName string, notices []redactionNotice) {
+func (s *Server) recordRedactionEvent(ctx context.Context, sessionID, toolName string, notices []redactionNotice) {
 	if s.eventStore == nil || len(notices) == 0 {
 		return
+	}
+
+	targetSessionID := strings.TrimSpace(sessionID)
+	if targetSessionID == "" {
+		targetSessionID = redactionAuditSessionID
 	}
 
 	payload, err := json.Marshal(map[string]interface{}{
@@ -2101,7 +2531,7 @@ func (s *Server) recordRedactionEvent(ctx context.Context, toolName string, noti
 
 	err = s.eventStore.Append(ctx, audit.Event{
 		ID:            uuid.NewString(),
-		SessionID:     redactionAuditSessionID,
+		SessionID:     targetSessionID,
 		Timestamp:     time.Now().UTC(),
 		EventType:     audit.EventToolRedaction,
 		Actor:         requestActor(ctx),

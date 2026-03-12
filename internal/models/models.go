@@ -33,7 +33,7 @@ func (ToolResultBlock) contentBlock() {}
 
 // Message is a single turn in a conversation.
 type Message struct {
-	Role    string         // "user" or "assistant"
+	Role    string // "user" or "assistant"
 	Content []ContentBlock
 }
 

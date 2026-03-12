@@ -367,6 +367,42 @@ func (s *EventStore) RecordToolInvocation(ctx context.Context, r ToolInvocationR
 	return err
 }
 
+func (s *EventStore) EnsureSessionRecord(ctx context.Context, sessionID, trustTier string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if trustTier == "" {
+		trustTier = "unknown"
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO sessions (id, repo_path, trust_tier, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		sessionID,
+		"unknown",
+		trustTier,
+		"active",
+		now.UTC().Format(time.RFC3339Nano),
+		now.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *EventStore) EnsureTurnRecord(ctx context.Context, turnID, sessionID string, now time.Time) error {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO turns (id, session_id, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		turnID,
+		sessionID,
+		"active",
+		now.UTC().Format(time.RFC3339Nano),
+		now.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
 func (s *EventStore) RecordModelInvocation(ctx context.Context, r ModelInvocationRecord) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO model_invocations
@@ -377,6 +413,72 @@ func (s *EventStore) RecordModelInvocation(ctx context.Context, r ModelInvocatio
 		r.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
+}
+
+func (s *EventStore) QueryModelInvocationsByTurn(ctx context.Context, turnID string) ([]ModelInvocationRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, turn_id, provider, model, routing_policy, prompt_ref, response_ref, created_at
+		 FROM model_invocations
+		 WHERE turn_id = ?
+		 ORDER BY created_at ASC, rowid ASC`,
+		turnID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var records []ModelInvocationRecord
+	for rows.Next() {
+		var rec ModelInvocationRecord
+		var createdAtStr string
+		if err := rows.Scan(&rec.ID, &rec.SessionID, &rec.TurnID, &rec.Provider, &rec.Model, &rec.RoutingPolicy, &rec.PromptRef, &rec.ResponseRef, &createdAtStr); err != nil {
+			return nil, err
+		}
+		rec.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAtStr)
+		if err != nil {
+			rec.CreatedAt, err = time.Parse(time.RFC3339, createdAtStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse model invocation created_at %q: %w", createdAtStr, err)
+			}
+		}
+		records = append(records, rec)
+	}
+
+	return records, rows.Err()
+}
+
+func (s *EventStore) QueryModelInvocationsBySession(ctx context.Context, sessionID string) ([]ModelInvocationRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, turn_id, provider, model, routing_policy, prompt_ref, response_ref, created_at
+		 FROM model_invocations
+		 WHERE session_id = ?
+		 ORDER BY created_at ASC, rowid ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var records []ModelInvocationRecord
+	for rows.Next() {
+		var rec ModelInvocationRecord
+		var createdAtStr string
+		if err := rows.Scan(&rec.ID, &rec.SessionID, &rec.TurnID, &rec.Provider, &rec.Model, &rec.RoutingPolicy, &rec.PromptRef, &rec.ResponseRef, &createdAtStr); err != nil {
+			return nil, err
+		}
+		rec.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAtStr)
+		if err != nil {
+			rec.CreatedAt, err = time.Parse(time.RFC3339, createdAtStr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse model invocation created_at %q: %w", createdAtStr, err)
+			}
+		}
+		records = append(records, rec)
+	}
+
+	return records, rows.Err()
 }
 
 func (s *EventStore) RecordFileMutation(ctx context.Context, r FileMutationRecord) error {

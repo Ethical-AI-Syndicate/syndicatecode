@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -300,11 +302,149 @@ func (a *App) handleReplay(ctx context.Context, sessionID, eventType string) err
 		return err
 	}
 	for _, ev := range events {
+		if ev.EventType == "file_mutation" {
+			if err := a.writeln(a.renderFileMutation(ev)); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := a.writef("%s %s %s\n", ev.Timestamp, ev.EventType, ev.Actor); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (a *App) renderFileMutation(event ReplayEvent) string {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return "[file_mutation] (unparseable payload)"
+	}
+
+	path, _ := payload["path"].(string)
+	mutType, _ := payload["type"].(string)
+	before, _ := payload["before_hash"].(string)
+	after, _ := payload["after_hash"].(string)
+
+	if diff := unifiedDiffFromPayload(payload, path); diff != "" {
+		if path == "" && mutType == "" {
+			return diff
+		}
+		return fmt.Sprintf("~ %s (%s)\n%s", path, mutType, diff)
+	}
+
+	if before == "" && after == "" {
+		return fmt.Sprintf("~ %s (%s)", path, mutType)
+	}
+	return fmt.Sprintf("~ %s (%s) before:%s after:%s", path, mutType, before, after)
+}
+
+func unifiedDiffFromPayload(payload map[string]interface{}, path string) string {
+	if patchText, ok := payload["patch"].(string); ok {
+		trimmed := strings.TrimSpace(patchText)
+		if trimmed != "" {
+			return colorizeUnifiedDiff(trimmed)
+		}
+	}
+
+	rawHunks, ok := payload["hunks"].([]interface{})
+	if !ok || len(rawHunks) == 0 {
+		return ""
+	}
+
+	filePath := path
+	if filePath == "" {
+		filePath = "file"
+	}
+
+	var b strings.Builder
+	b.WriteString("--- a/")
+	b.WriteString(filePath)
+	b.WriteString("\n")
+	b.WriteString("+++ b/")
+	b.WriteString(filePath)
+
+	emittedHunk := false
+
+	for _, rawHunk := range rawHunks {
+		hunk, ok := rawHunk.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		oldStart, okOldStart := jsonNumberToInt(hunk["old_start"])
+		oldLines, okOldLines := jsonNumberToInt(hunk["old_lines"])
+		newStart, okNewStart := jsonNumberToInt(hunk["new_start"])
+		newLines, okNewLines := jsonNumberToInt(hunk["new_lines"])
+		if !okOldStart || !okOldLines || !okNewStart || !okNewLines {
+			continue
+		}
+		emittedHunk = true
+
+		b.WriteString("\n@@ -")
+		b.WriteString(strconv.Itoa(oldStart))
+		b.WriteString(",")
+		b.WriteString(strconv.Itoa(oldLines))
+		b.WriteString(" +")
+		b.WriteString(strconv.Itoa(newStart))
+		b.WriteString(",")
+		b.WriteString(strconv.Itoa(newLines))
+		b.WriteString(" @@")
+
+		if lines, ok := hunk["lines"].([]interface{}); ok {
+			for _, rawLine := range lines {
+				line, ok := rawLine.(string)
+				if !ok {
+					continue
+				}
+				b.WriteString("\n")
+				b.WriteString(line)
+			}
+		}
+	}
+
+	if !emittedHunk {
+		return ""
+	}
+
+	return colorizeUnifiedDiff(b.String())
+}
+
+func colorizeUnifiedDiff(diff string) string {
+	if strings.TrimSpace(diff) == "" {
+		return diff
+	}
+	const (
+		ansiReset = "\x1b[0m"
+		ansiRed   = "\x1b[31m"
+		ansiGreen = "\x1b[32m"
+		ansiCyan  = "\x1b[36m"
+	)
+	lines := strings.Split(diff, "\n")
+	for i, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "@@"):
+			lines[i] = ansiCyan + line + ansiReset
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			lines[i] = ansiGreen + line + ansiReset
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			lines[i] = ansiRed + line + ansiReset
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func jsonNumberToInt(raw interface{}) (int, bool) {
+	switch v := raw.(type) {
+	case float64:
+		if math.Trunc(v) != v {
+			return 0, false
+		}
+		return int(v), true
+	case int:
+		return v, true
+	default:
+		return 0, false
+	}
 }
 
 func (a *App) writef(format string, args ...interface{}) error {
