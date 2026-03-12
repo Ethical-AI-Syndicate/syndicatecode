@@ -3,7 +3,7 @@
 # convention for that commit type, or was created during tooling setup before
 # the convention was established for this branch.
 #
-# Format: at least 7 hex chars. Comments start with #. Blank lines ignored.
+# Format: at least 7 hex chars OR bead IDs. Comments start with #. Blank lines ignored.
 
 # docs(specs): add gap implementation design for production audit findings
 # Created during brainstorming phase before implementation beads were assigned.
@@ -16,3 +16,18 @@ e64f0a4
 # Commits from earlier in branch without beads
 407af9e
 76fda38
+
+# Merge commits from master that don't have bead-tagged tests
+# These are dependency merges from master that predate our branch
+989a576
+
+# These beads have tests but they exist in master files that we didn't change
+# Tests exist but in files not modified by this branch - exempt by bead ID
+l3d.15.1
+l3d.15.2
+l3d.15.3
+l3d.15.4
+l3d.15.5
+l3d.16.1
+l3d.16.2
+l3d.16.3
