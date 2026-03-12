@@ -101,6 +101,43 @@ func TestHandleEventStream_DeliversEventsAndResumes_Bead_l3d_2_4(t *testing.T) {
 	}
 }
 
+func TestEventStream_RequiresSessionID_Bead_l3d_X_1(t *testing.T) {
+	server := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/stream", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleEventStream(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rr.Code)
+	}
+}
+
+func TestEventStream_RejectsUnknownSession_Bead_l3d_X_1(t *testing.T) {
+	eventStore, err := audit.NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := eventStore.Close(); closeErr != nil {
+			t.Fatalf("failed to close event store: %v", closeErr)
+		}
+	})
+
+	server := &Server{
+		sessionMgr: session.NewManager(eventStore),
+		eventStore: eventStore,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events/stream?session_id=nonexistent", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleEventStream(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected %d, got %d", http.StatusNotFound, rr.Code)
+	}
+}
+
 //nolint:staticcheck // nhooyr websocket kept for Go 1.21 compatibility.
 func readStreamEvent(t *testing.T, conn *websocket.Conn) audit.Event {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

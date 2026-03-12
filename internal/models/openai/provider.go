@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -36,6 +37,14 @@ type model struct {
 	id     string
 }
 
+type toolCallDeltaState struct {
+	ID      string
+	Name    string
+	Started bool
+}
+
+func (m *model) ProviderName() string { return "openai" }
+
 // ModelID returns the model identifier (e.g. "gpt-4o").
 func (m *model) ModelID() string { return m.id }
 
@@ -52,6 +61,8 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 
 		stream := m.client.Chat.Completions.NewStreaming(ctx, params)
 		defer func() { _ = stream.Close() }()
+
+		toolCallStatesByIndex := map[int64]*toolCallDeltaState{}
 
 		for stream.Next() {
 			chunk := stream.Current()
@@ -94,24 +105,12 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 					}
 				}
 
-				// Tool calls
-				for _, toolCall := range delta.ToolCalls {
-					// Tool call start with ID and name
-					if toolCall.ID != "" && toolCall.Function.Name != "" {
-						select {
-						case ch <- models.ToolUseStartEvent{ID: toolCall.ID, Name: toolCall.Function.Name}:
-						case <-ctx.Done():
-							return
-						}
-					}
-
-					// Tool input delta
-					if toolCall.Function.Arguments != "" {
-						select {
-						case ch <- models.ToolInputDeltaEvent{ID: toolCall.ID, Delta: toolCall.Function.Arguments}:
-						case <-ctx.Done():
-							return
-						}
+				// Tool calls.
+				for _, event := range collectToolCallDeltaEvents(delta.ToolCalls, toolCallStatesByIndex) {
+					select {
+					case ch <- event:
+					case <-ctx.Done():
+						return
 					}
 				}
 			}
@@ -125,6 +124,41 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 		}
 	}()
 	return ch, nil
+}
+
+func collectToolCallDeltaEvents(toolCalls []openaisdk.ChatCompletionChunkChoiceDeltaToolCall, statesByIndex map[int64]*toolCallDeltaState) []models.StreamEvent {
+	events := make([]models.StreamEvent, 0, len(toolCalls)*2)
+
+	for _, toolCall := range toolCalls {
+		state := statesByIndex[toolCall.Index]
+		if state == nil {
+			state = &toolCallDeltaState{}
+			statesByIndex[toolCall.Index] = state
+		}
+
+		if toolCall.ID != "" {
+			state.ID = toolCall.ID
+		}
+		if toolCall.Function.Name != "" {
+			state.Name = toolCall.Function.Name
+		}
+
+		resolvedID := toolCall.ID
+		if resolvedID == "" {
+			resolvedID = state.ID
+		}
+
+		if !state.Started && resolvedID != "" && state.Name != "" {
+			events = append(events, models.ToolUseStartEvent{ID: resolvedID, Name: state.Name})
+			state.Started = true
+		}
+
+		if toolCall.Function.Arguments != "" {
+			events = append(events, models.ToolInputDeltaEvent{ID: resolvedID, Delta: toolCall.Function.Arguments})
+		}
+	}
+
+	return events
 }
 
 // buildChatCompletionParams converts our agnostic Params to the SDK's ChatCompletionNewParams.
@@ -169,20 +203,49 @@ func buildChatCompletionParams(modelID string, p models.Params) openaisdk.ChatCo
 func buildMessages(messages []models.Message) []openaisdk.ChatCompletionMessageParamUnion {
 	out := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, msg := range messages {
-		// Extract text content from first TextBlock if present
-		var text string
-		for _, block := range msg.Content {
-			if tb, ok := block.(models.TextBlock); ok {
-				text = tb.Text
-				break
-			}
-		}
-
 		switch msg.Role {
 		case "assistant":
-			out = append(out, openaisdk.AssistantMessage(text))
+			textParts := make([]string, 0, len(msg.Content))
+			toolCalls := make([]openaisdk.ChatCompletionMessageToolCallUnionParam, 0, len(msg.Content))
+			for _, block := range msg.Content {
+				switch v := block.(type) {
+				case models.TextBlock:
+					textParts = append(textParts, v.Text)
+				case models.ToolUseBlock:
+					toolCalls = append(toolCalls, openaisdk.ChatCompletionMessageToolCallUnionParam{
+						OfFunction: &openaisdk.ChatCompletionMessageFunctionToolCallParam{
+							ID: v.ID,
+							Function: openaisdk.ChatCompletionMessageFunctionToolCallFunctionParam{
+								Name:      v.Name,
+								Arguments: string(v.Input),
+							},
+						},
+					})
+				}
+			}
+			if len(textParts) == 0 && len(toolCalls) == 0 {
+				continue
+			}
+
+			assistantMsg := openaisdk.ChatCompletionAssistantMessageParam{}
+			if len(textParts) > 0 {
+				assistantMsg = *openaisdk.AssistantMessage(strings.Join(textParts, "\n")).OfAssistant
+			}
+			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, toolCalls...)
+			out = append(out, openaisdk.ChatCompletionMessageParamUnion{OfAssistant: &assistantMsg})
 		default: // "user"
-			out = append(out, openaisdk.UserMessage(text))
+			textParts := make([]string, 0, len(msg.Content))
+			for _, block := range msg.Content {
+				switch v := block.(type) {
+				case models.TextBlock:
+					textParts = append(textParts, v.Text)
+				case models.ToolResultBlock:
+					out = append(out, openaisdk.ToolMessage(v.Content, v.ToolUseID))
+				}
+			}
+			if len(textParts) > 0 {
+				out = append(out, openaisdk.UserMessage(strings.Join(textParts, "\n")))
+			}
 		}
 	}
 	return out

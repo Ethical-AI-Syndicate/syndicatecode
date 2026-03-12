@@ -35,6 +35,8 @@ type model struct {
 	id     string
 }
 
+func (m *model) ProviderName() string { return "anthropic" }
+
 // ModelID returns the model identifier (e.g. "claude-sonnet-4-6").
 func (m *model) ModelID() string { return m.id }
 
@@ -45,6 +47,8 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 	ch := make(chan models.StreamEvent, 32)
 	go func() {
 		defer close(ch)
+
+		toolUseIDByBlockIndex := map[int64]string{}
 
 		// Build SDK message params.
 		msgParams := buildMessageParams(p)
@@ -66,6 +70,7 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 				cb := evt.AsContentBlockStart()
 				if cb.ContentBlock.Type == "tool_use" {
 					tu := cb.ContentBlock.AsToolUse()
+					toolUseIDByBlockIndex[cb.Index] = tu.ID
 					select {
 					case ch <- models.ToolUseStartEvent{ID: tu.ID, Name: tu.Name}:
 					case <-ctx.Done():
@@ -85,10 +90,9 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 					}
 				case "input_json_delta":
 					ijd := delta.AsInputJSONDelta()
-					// We don't have the tool ID in the delta event itself, so we
-					// send an empty ID; callers correlate by sequence order.
+					inputEvt := buildToolInputDeltaEvent(cbd.Index, ijd.PartialJSON, toolUseIDByBlockIndex)
 					select {
-					case ch <- models.ToolInputDeltaEvent{Delta: ijd.PartialJSON}:
+					case ch <- inputEvt:
 					case <-ctx.Done():
 						return
 					}
@@ -114,6 +118,10 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 		}
 	}()
 	return ch, nil
+}
+
+func buildToolInputDeltaEvent(blockIndex int64, partialJSON string, toolUseIDByBlockIndex map[int64]string) models.ToolInputDeltaEvent {
+	return models.ToolInputDeltaEvent{ID: toolUseIDByBlockIndex[blockIndex], Delta: partialJSON}
 }
 
 // buildMessageParams converts our agnostic Params to the SDK's MessageNewParams.

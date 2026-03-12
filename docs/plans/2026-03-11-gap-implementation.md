@@ -14,6 +14,23 @@ produces independently verifiable, bead-evidenced increments.
 **Tech Stack:** Go 1.25, SQLite (WAL), WebSocket (nhooyr.io/websocket), Anthropic Go SDK,
 OpenAI Go SDK, Vercel AI SDK interface patterns in Go.
 
+## Status Notes (2026-03-12)
+
+- **Task 10 implemented:** `internal/controlplane/server.go` now requires `session_id` in
+  `handleEventStream`, validates session existence via `sessionMgr.Get`, and scopes event
+  replay by passing `sessionID` into `streamNewEvents` (`eventStore.QueryBySession`).
+  Coverage: `internal/controlplane/event_stream_test.go`
+  (`TestEventStream_RequiresSessionID_Bead_l3d_X_1`,
+  `TestEventStream_RejectsUnknownSession_Bead_l3d_X_1`).
+- **Supporting streaming closure implemented:** session-scoped in-memory bus added in
+  `internal/controlplane/streambus.go` and consumed by `handleEventStream` for low-latency
+  delivery alongside durable polling.
+- **Task 18 operator export behavior implemented:**
+  `internal/controlplane/server.go` enforces `include_artifacts=true` as operator-only,
+  with coverage in `internal/controlplane/replay_test.go`
+  (`TestSessionExport_IncludeArtifactsRequiresOperatorRole`,
+  `TestSessionExport_IncludeArtifactsReturnsArtifactsForOperator`).
+
 ---
 
 ## Pre-Flight
@@ -1061,6 +1078,8 @@ git commit -m "feat(models/openai): add OpenAI streaming provider [l3d.X.1]"
 ---
 
 ### Task 10: WebSocket Session Scoping
+
+**Status:** Implemented (reconciled 2026-03-12).
 
 **Files:**
 - Modify: `internal/controlplane/server.go`
@@ -2198,6 +2217,9 @@ git commit -m "feat(tui): render file_mutation events as structured diff summary
 ---
 
 ### Task 18: Session Export Endpoint
+
+**Status:** Implemented, including operator-only artifact inclusion via
+`?include_artifacts=true`.
 
 **Files:**
 - Modify: `internal/controlplane/server.go`

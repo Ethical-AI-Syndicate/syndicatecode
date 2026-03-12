@@ -31,7 +31,7 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/controlplane": {
 				Owner:            "controlplane",
 				Responsibilities: []string{"request orchestration", "session and turn coordination", "policy surface integration"},
-				AllowedImports:   []string{"internal/audit", "internal/context", "internal/mcp", "internal/patch", "internal/policy", "internal/requestmeta", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
+				AllowedImports:   []string{"internal/agent", "internal/audit", "internal/context", "internal/mcp", "internal/models", "internal/models/anthropic", "internal/models/openai", "internal/patch", "internal/policy", "internal/requestmeta", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
 			},
 			"internal/session": {
 				Owner:            "state",
@@ -42,6 +42,11 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 				Owner:            "ai-systems",
 				Responsibilities: []string{"turn lifecycle", "context assembly", "token budgeting", "retrieval profile classification"},
 				AllowedImports:   []string{"internal/audit", "internal/requestmeta", "internal/secrets", "internal/session", "internal/state"},
+			},
+			"internal/agent": {
+				Owner:            "ai-systems",
+				Responsibilities: []string{"react loop", "model/tool orchestration", "reliability limits"},
+				AllowedImports:   []string{"internal/models", "internal/tools", "internal/trust"},
 			},
 			"internal/state": {
 				Owner:            "state",
@@ -88,6 +93,11 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 				Responsibilities: []string{"policy contracts and evaluation surface"},
 				AllowedImports:   []string{},
 			},
+			"internal/trust": {
+				Owner:            "governance",
+				Responsibilities: []string{"trust-tier policy resolution", "side-effect/approval rules"},
+				AllowedImports:   []string{"internal/tools"},
+			},
 			"internal/secrets": {
 				Owner:            "security",
 				Responsibilities: []string{"secret detection, classification, and redaction policy"},
@@ -101,7 +111,7 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/sandbox": {
 				Owner:            "runtime",
 				Responsibilities: []string{"isolation-level runners", "resource limits", "execution controls"},
-				AllowedImports:   []string{"internal/tools"},
+				AllowedImports:   []string{"internal/tools", "internal/trust"},
 			},
 			"internal/validation": {
 				Owner:            "architecture",
