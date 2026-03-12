@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/models"
@@ -69,5 +70,63 @@ func TestBuildChatCompletionParamsSystemPrompt_Bead_l3d_16_4(t *testing.T) {
 	first := params.Messages[0]
 	if first.OfSystem == nil {
 		t.Fatal("expected first message to be a system message")
+	}
+}
+
+func TestBuildAssistantMessageWithToolUse_Bead_l3d_16_4(t *testing.T) {
+	// Build a params with an assistant message containing a ToolUseBlock
+	p := models.Params{
+		Messages: []models.Message{
+			{
+				Role: "assistant",
+				Content: []models.ContentBlock{
+					models.ToolUseBlock{ID: "tc_1", Name: "my_tool", Input: json.RawMessage(`{"key":"val"}`)},
+				},
+			},
+		},
+	}
+	params := buildChatCompletionParams("gpt-4o", p)
+	// Find the assistant message with ToolCalls
+	var found bool
+	for _, msg := range params.Messages {
+		if msg.OfAssistant != nil && len(msg.OfAssistant.ToolCalls) > 0 {
+			found = true
+			tc := msg.OfAssistant.ToolCalls[0]
+			if tc.OfFunction == nil {
+				t.Fatal("expected OfFunction to be set")
+			}
+			if tc.OfFunction.ID != "tc_1" {
+				t.Errorf("expected ID tc_1, got %s", tc.OfFunction.ID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected an assistant message with ToolCalls")
+	}
+}
+
+func TestBuildUserMessagesWithToolResult_Bead_l3d_16_4(t *testing.T) {
+	p := models.Params{
+		Messages: []models.Message{
+			{
+				Role: "user",
+				Content: []models.ContentBlock{
+					models.ToolResultBlock{ToolUseID: "tc_1", Content: "result text", IsError: false},
+				},
+			},
+		},
+	}
+	params := buildChatCompletionParams("gpt-4o", p)
+	var found bool
+	for _, msg := range params.Messages {
+		if msg.OfTool != nil {
+			found = true
+			if msg.OfTool.ToolCallID != "tc_1" {
+				t.Errorf("expected ToolCallID tc_1, got %s", msg.OfTool.ToolCallID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a tool message in params")
 	}
 }

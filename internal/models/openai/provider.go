@@ -59,6 +59,10 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 		// Fix C3: map from tool call Index to its ID for correlation across chunks.
 		toolIDs := make(map[int64]string)
 
+		// Fix N1: accumulate FinishReason across chunks; the final usage chunk
+		// arrives with choices:[] so we must save it from an earlier chunk.
+		var stopReason string
+
 		for stream.Next() {
 			chunk := stream.Current()
 
@@ -73,12 +77,13 @@ func (m *model) Stream(ctx context.Context, p models.Params) (<-chan models.Stre
 				}
 			}
 
+			// Fix N1: save FinishReason whenever a choice carries it.
+			if len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != "" {
+				stopReason = chunk.Choices[0].FinishReason
+			}
+
 			// Emit output tokens and stop reason if present
 			if chunk.Usage.CompletionTokens != 0 {
-				var stopReason string
-				if len(chunk.Choices) > 0 {
-					stopReason = chunk.Choices[0].FinishReason
-				}
 				select {
 				case ch <- models.MessageDeltaEvent{
 					OutputTokens: int(chunk.Usage.CompletionTokens),
