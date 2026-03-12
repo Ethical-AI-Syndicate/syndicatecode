@@ -700,6 +700,9 @@ func findTaggedTestsForBead(bead string) ([]linkedTest, error) {
 		// #nosec G304,G122 -- walk scope is repository root and reads are non-mutating for test discovery.
 		body, err := os.ReadFile(path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		lineNum := 0
