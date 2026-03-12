@@ -1,12 +1,23 @@
 {
   "bead_id": "l3d.1",
   "bead_issue_id": "SyndicateCode-l3d.1",
-  "bead_issue_status": "open",
-  "generated_at_utc": "2026-03-10T00:29:16Z",
+  "bead_issue_status": "closed",
+  "generated_at_utc": "2026-03-12T03:26:49Z",
   "generator_version": "v2",
-  "head_sha": "131ffd49c67c59ac148953723dbb737c9cf244ca",
+  "head_sha": "f58d04dbae156915141feb4b5982b1646e46adbb",
   "range": "origin/master..HEAD",
   "commits": [
+    {
+      "sha": "e147a589e8e5e13c87ad18d62c80ce3fccd37300",
+      "subject": "chore(evidence): record bead evidence for l3d.1, l3d.3.2, l3d.8.1, l3d.8.4, l3d.14.4 [l3d.1] [l3d.3.2] [l3d.8.1] [l3d.8.4] [l3d.14.4]",
+      "beads": [
+        "l3d.1",
+        "l3d.14.4",
+        "l3d.3.2",
+        "l3d.8.1",
+        "l3d.8.4"
+      ]
+    },
     {
       "sha": "de2f0b61a584ca9dac9c10104e1dbe28f997f69d",
       "subject": "docs(agents): streamline AGENTS.md to Beads integration guide [l3d.1]",
@@ -16,6 +27,8 @@
     }
   ],
   "changed_files": [
+    ".bead-exempt",
+    ".beads/dolt-monitor.pid.lock",
     ".gitlab-ci.yml",
     "AGENTS.md",
     "Makefile",
@@ -23,77 +36,232 @@
     "bead-evidence/l3d.1.4.json",
     "bead-evidence/l3d.1.json",
     "bead-evidence/l3d.10.4.json",
+    "bead-evidence/l3d.12.4.json",
+    "bead-evidence/l3d.13.2.json",
+    "bead-evidence/l3d.13.3.json",
+    "bead-evidence/l3d.13.4.json",
+    "bead-evidence/l3d.14.4.json",
+    "bead-evidence/l3d.15.1.json",
+    "bead-evidence/l3d.15.2.json",
+    "bead-evidence/l3d.15.3.json",
+    "bead-evidence/l3d.15.4.json",
+    "bead-evidence/l3d.17.4.json",
     "bead-evidence/l3d.2.1.json",
+    "bead-evidence/l3d.2.2.json",
     "bead-evidence/l3d.2.3.json",
+    "bead-evidence/l3d.2.4.json",
+    "bead-evidence/l3d.3.2.json",
     "bead-evidence/l3d.3.4.json",
     "bead-evidence/l3d.5.1.json",
     "bead-evidence/l3d.6.1.json",
     "bead-evidence/l3d.6.2.json",
+    "bead-evidence/l3d.8.1.json",
+    "bead-evidence/l3d.8.4.json",
+    "bead-evidence/v1-go-no-go.json",
+    "bin/server",
+    "docs/plans/2026-03-11-gap-implementation.md",
     "docs/schema/registry.json",
+    "docs/superpowers/specs/2026-03-11-gap-implementation-design.md",
+    "go.mod",
+    "go.sum",
+    "internal/agent/agent.go",
+    "internal/agent/agent_test.go",
+    "internal/agent/runner.go",
+    "internal/agent/runner_test.go",
     "internal/audit/event_store.go",
     "internal/audit/event_store_test.go",
+    "internal/audit/event_types.go",
+    "internal/audit/event_types_test.go",
+    "internal/audit/migrations.go",
+    "internal/audit/migrations_test.go",
     "internal/context/context.go",
     "internal/context/context_test.go",
     "internal/controlplane/approval.go",
     "internal/controlplane/approval_test.go",
+    "internal/controlplane/conformance_suite_test.go",
     "internal/controlplane/error_envelope.go",
     "internal/controlplane/error_envelope_test.go",
+    "internal/controlplane/event_stream_test.go",
+    "internal/controlplane/mcp_transport_test.go",
     "internal/controlplane/provider_policy.go",
     "internal/controlplane/provider_policy_test.go",
+    "internal/controlplane/replay_test.go",
+    "internal/controlplane/retention_scheduler_test.go",
+    "internal/controlplane/schema_validation.go",
     "internal/controlplane/server.go",
     "internal/controlplane/server_test.go",
     "internal/controlplane/startup_restore.go",
     "internal/controlplane/startup_restore_test.go",
+    "internal/controlplane/streambus.go",
+    "internal/controlplane/streambus_test.go",
+    "internal/controlplane/test_auth_helpers_test.go",
+    "internal/controlplane/tools_endpoint_test.go",
     "internal/controlplane/turns_api_test.go",
+    "internal/models/anthropic/provider.go",
+    "internal/models/anthropic/provider_stream_test.go",
+    "internal/models/anthropic/provider_test.go",
+    "internal/models/models.go",
+    "internal/models/models_test.go",
+    "internal/models/openai/provider.go",
+    "internal/models/openai/provider_test.go",
+    "internal/models/registry.go",
+    "internal/models/registry_test.go",
     "internal/patch/proposal.go",
     "internal/patch/proposal_test.go",
     "internal/patch/validator.go",
     "internal/patch/validator_test.go",
+    "internal/requestmeta/requestmeta.go",
+    "internal/requestmeta/requestmeta_test.go",
+    "internal/sandbox/symbolic_executor.go",
+    "internal/sandbox/symbolic_executor_test.go",
+    "internal/sandbox/trust_handler.go",
+    "internal/sandbox/trust_handler_test.go",
+    "internal/tools/executor.go",
+    "internal/tools/executor_test.go",
     "internal/tools/models.go",
     "internal/tools/models_test.go",
+    "internal/tools/patch_handler.go",
+    "internal/tools/patch_handler_test.go",
     "internal/tools/registry_test.go",
+    "internal/trust/policy.go",
+    "internal/trust/policy_test.go",
+    "internal/validation/package_boundaries.go",
+    "internal/validation/package_boundaries_test.go",
     "pkg/api/schema_artifacts_test.go",
     "pkg/tui/app.go",
     "pkg/tui/app_test.go",
     "pkg/tui/client.go",
+    "pkg/tui/client_test.go",
+    "pkg/tui/types.go",
+    "pkg/tui/types_test.go",
     "tools/beads/main.go",
     "tools/beads/main_test.go",
+    "tools/gonogo/main.go",
+    "tools/gonogo/main_test.go",
+    "tools/gonogo/report_test.go",
     "tools/verify/main.go"
   ],
   "changed_go_files": [
+    "internal/agent/agent.go",
+    "internal/agent/runner.go",
     "internal/audit/event_store.go",
+    "internal/audit/event_types.go",
+    "internal/audit/migrations.go",
     "internal/context/context.go",
     "internal/controlplane/approval.go",
     "internal/controlplane/error_envelope.go",
     "internal/controlplane/provider_policy.go",
+    "internal/controlplane/schema_validation.go",
     "internal/controlplane/server.go",
     "internal/controlplane/startup_restore.go",
+    "internal/controlplane/streambus.go",
+    "internal/models/anthropic/provider.go",
+    "internal/models/models.go",
+    "internal/models/openai/provider.go",
+    "internal/models/registry.go",
     "internal/patch/proposal.go",
     "internal/patch/validator.go",
+    "internal/requestmeta/requestmeta.go",
+    "internal/sandbox/symbolic_executor.go",
+    "internal/sandbox/trust_handler.go",
+    "internal/tools/executor.go",
     "internal/tools/models.go",
+    "internal/tools/patch_handler.go",
+    "internal/trust/policy.go",
+    "internal/validation/package_boundaries.go",
     "pkg/tui/app.go",
     "pkg/tui/client.go",
+    "pkg/tui/types.go",
     "tools/beads/main.go",
+    "tools/gonogo/main.go",
     "tools/verify/main.go"
   ],
   "changed_test_files": [
+    "internal/agent/agent_test.go",
+    "internal/agent/runner_test.go",
     "internal/audit/event_store_test.go",
+    "internal/audit/event_types_test.go",
+    "internal/audit/migrations_test.go",
     "internal/context/context_test.go",
     "internal/controlplane/approval_test.go",
+    "internal/controlplane/conformance_suite_test.go",
     "internal/controlplane/error_envelope_test.go",
+    "internal/controlplane/event_stream_test.go",
+    "internal/controlplane/mcp_transport_test.go",
     "internal/controlplane/provider_policy_test.go",
+    "internal/controlplane/replay_test.go",
+    "internal/controlplane/retention_scheduler_test.go",
     "internal/controlplane/server_test.go",
     "internal/controlplane/startup_restore_test.go",
+    "internal/controlplane/streambus_test.go",
+    "internal/controlplane/test_auth_helpers_test.go",
+    "internal/controlplane/tools_endpoint_test.go",
     "internal/controlplane/turns_api_test.go",
+    "internal/models/anthropic/provider_stream_test.go",
+    "internal/models/anthropic/provider_test.go",
+    "internal/models/models_test.go",
+    "internal/models/openai/provider_test.go",
+    "internal/models/registry_test.go",
     "internal/patch/proposal_test.go",
     "internal/patch/validator_test.go",
+    "internal/requestmeta/requestmeta_test.go",
+    "internal/sandbox/symbolic_executor_test.go",
+    "internal/sandbox/trust_handler_test.go",
+    "internal/tools/executor_test.go",
     "internal/tools/models_test.go",
+    "internal/tools/patch_handler_test.go",
     "internal/tools/registry_test.go",
+    "internal/trust/policy_test.go",
+    "internal/validation/package_boundaries_test.go",
     "pkg/api/schema_artifacts_test.go",
     "pkg/tui/app_test.go",
-    "tools/beads/main_test.go"
+    "pkg/tui/client_test.go",
+    "pkg/tui/types_test.go",
+    "tools/beads/main_test.go",
+    "tools/gonogo/main_test.go",
+    "tools/gonogo/report_test.go"
   ],
   "linked_tests": [
+    {
+      "file": "internal/audit/event_store_test.go",
+      "line": 567,
+      "test_name": "TestEventStore_RecordToolInvocation_Bead_l3d_15_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/audit/event_store_test.go",
+      "line": 616,
+      "test_name": "TestEventStore_RecordModelInvocation_Bead_l3d_15_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/audit/event_store_test.go",
+      "line": 655,
+      "test_name": "TestEventStore_RecordFileMutation_Bead_l3d_15_3",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/audit/event_types_test.go",
+      "line": 5,
+      "test_name": "TestEventTypeConstants_Bead_l3d_15_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/audit/migrations_test.go",
+      "line": 10,
+      "test_name": "TestApplyMigrations_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
     {
       "file": "internal/context/context_test.go",
       "line": 280,
@@ -106,6 +274,46 @@
       "file": "internal/context/context_test.go",
       "line": 326,
       "test_name": "TestTurnManager_AllowsNewTurnAfterTerminalTransition_Bead_l3d_1_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/context/context_test.go",
+      "line": 741,
+      "test_name": "TestContextAssembler_AssembleFromRanked_Bead_l3d_15_5",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/approval_test.go",
+      "line": 762,
+      "test_name": "TestApprovalFaultScenarios_Bead_l3d_17_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/conformance_suite_test.go",
+      "line": 7,
+      "test_name": "TestContractAndLifecycleConformance_Bead_l3d_13_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/conformance_suite_test.go",
+      "line": 16,
+      "test_name": "TestAdversarialSecurityRegressionSuite_Bead_l3d_13_3",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/controlplane/retention_scheduler_test.go",
+      "line": 12,
+      "test_name": "TestRetentionCleanupSchedulerDeletesExpiredArtifacts_Bead_l3d_10_4",
       "beads": [
         "l3d.1"
       ]
@@ -127,9 +335,321 @@
       ]
     },
     {
+      "file": "internal/models/anthropic/provider_test.go",
+      "line": 10,
+      "test_name": "TestAnthropicProvider_Name_Bead_l3d_16_3",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/anthropic/provider_test.go",
+      "line": 17,
+      "test_name": "TestAnthropicProvider_ModelID_Bead_l3d_16_3",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/anthropic/provider_test.go",
+      "line": 25,
+      "test_name": "TestAnthropicModel_ImplementsInterface_Bead_l3d_16_3",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/models_test.go",
+      "line": 9,
+      "test_name": "TestContentBlockTypes_Bead_l3d_16_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/models_test.go",
+      "line": 16,
+      "test_name": "TestStreamEventTypes_Bead_l3d_16_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/models_test.go",
+      "line": 24,
+      "test_name": "TestLanguageModelInterface_Bead_l3d_16_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/models_test.go",
+      "line": 45,
+      "test_name": "TestRegistry_RegisterAndResolve_Bead_l3d_16_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/models_test.go",
+      "line": 58,
+      "test_name": "TestRegistry_ResolveUnknownProvider_Bead_l3d_16_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/openai/provider_test.go",
+      "line": 11,
+      "test_name": "TestProviderName_Bead_l3d_16_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/openai/provider_test.go",
+      "line": 18,
+      "test_name": "TestModelID_Bead_l3d_16_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/openai/provider_test.go",
+      "line": 26,
+      "test_name": "TestStreamReturnsChannel_Bead_l3d_16_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/openai/provider_test.go",
+      "line": 42,
+      "test_name": "TestMessageStartEventType_Bead_l3d_16_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/openai/provider_test.go",
+      "line": 58,
+      "test_name": "TestBuildChatCompletionParamsSystemPrompt_Bead_l3d_16_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/openai/provider_test.go",
+      "line": 76,
+      "test_name": "TestBuildAssistantMessageWithToolUse_Bead_l3d_16_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/openai/provider_test.go",
+      "line": 108,
+      "test_name": "TestBuildUserMessagesWithToolResult_Bead_l3d_16_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/registry_test.go",
+      "line": 38,
+      "test_name": "TestNewRegistry_Bead_l3d_16_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/registry_test.go",
+      "line": 45,
+      "test_name": "TestRegister_Bead_l3d_16_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/registry_test.go",
+      "line": 62,
+      "test_name": "TestResolve_Bead_l3d_16_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/models/registry_test.go",
+      "line": 78,
+      "test_name": "TestResolveUnregisteredProvider_Bead_l3d_16_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/requestmeta/requestmeta_test.go",
+      "line": 8,
+      "test_name": "TestActorRoundtrip_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/requestmeta/requestmeta_test.go",
+      "line": 15,
+      "test_name": "TestRoleRoundtrip_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/requestmeta/requestmeta_test.go",
+      "line": 22,
+      "test_name": "TestActorMissing_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/requestmeta/requestmeta_test.go",
+      "line": 28,
+      "test_name": "TestRoleMissing_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/requestmeta/requestmeta_test.go",
+      "line": 34,
+      "test_name": "TestActorAndRoleCombined_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/sandbox/symbolic_executor_test.go",
+      "line": 8,
+      "test_name": "TestSymbolicExecutorRejectsUnknownCommand_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/sandbox/symbolic_executor_test.go",
+      "line": 26,
+      "test_name": "TestSymbolicExecutorAllowsKnownCommand_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/sandbox/trust_handler_test.go",
+      "line": 8,
+      "test_name": "TestSelectRunnerForTrustTierReturnsCorrectRunner_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/sandbox/trust_handler_test.go",
+      "line": 37,
+      "test_name": "TestRestrictedShellByTrustHandler_Bead_l3d_17_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "internal/tools/executor_test.go",
+      "line": 209,
+      "test_name": "TestExecutor_InvokesRecorder_Bead_l3d_15_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
       "file": "pkg/api/schema_artifacts_test.go",
       "line": 132,
       "test_name": "TestSchemaDocumentationAndDriftDetection_Bead_l3d_14_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/app_test.go",
+      "line": 166,
+      "test_name": "TestApp_PolicyAndReplayCommands_Bead_l3d_15_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/app_test.go",
+      "line": 195,
+      "test_name": "TestApp_PrimaryCommandSurface_Bead_l3d_15_1",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/app_test.go",
+      "line": 223,
+      "test_name": "TestCommandMappings_Bead_l3d_15_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/app_test.go",
+      "line": 249,
+      "test_name": "TestApp_ApprovalCommandsRejectInvalidLifecycle_Bead_l3d_15_3",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/app_test.go",
+      "line": 269,
+      "test_name": "TestApp_ApprovalCommandsRejectExpired_Bead_l3d_15_3",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/app_test.go",
+      "line": 289,
+      "test_name": "TestApp_ReplayModeIsReadOnly_Bead_l3d_12_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/client_test.go",
+      "line": 43,
+      "test_name": "TestAPIClient_GetPolicy_Bead_l3d_15_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/client_test.go",
+      "line": 63,
+      "test_name": "TestAPIClient_ListSessionEvents_Bead_l3d_15_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/types_test.go",
+      "line": 5,
+      "test_name": "TestReplayEventJSONTags_Bead_l3d_15_4",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "pkg/tui/types_test.go",
+      "line": 12,
+      "test_name": "TestPolicyDocumentType_Bead_l3d_15_4",
       "beads": [
         "l3d.1"
       ]
@@ -202,6 +722,14 @@
       "file": "tools/beads/main_test.go",
       "line": 115,
       "test_name": "TestParseOptions_ShowPositionalBead_Bead_l3d_10_2",
+      "beads": [
+        "l3d.1"
+      ]
+    },
+    {
+      "file": "tools/gonogo/main_test.go",
+      "line": 5,
+      "test_name": "TestGoNoGoReportAutomation_Bead_l3d_13_4",
       "beads": [
         "l3d.1"
       ]
