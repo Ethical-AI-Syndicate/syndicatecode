@@ -53,7 +53,7 @@ func (e *SymbolicCommandExecutor) Run(ctx context.Context, command string, _ []s
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(cmdCtx, spec.Command, spec.Args...)
+	cmd := exec.CommandContext(cmdCtx, spec.Command, spec.Args...) // #nosec G204
 	if options.WorkingDir != "" {
 		cmd.Dir = options.WorkingDir
 	}
