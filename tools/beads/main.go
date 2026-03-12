@@ -652,7 +652,7 @@ func isExemptSHA(sha string, exemptSHAs []string) bool {
 func isExemptBead(bead string, exemptSHAs []string) bool {
 	// Check if bead ID is in exempt list (allows bypassing test tag requirement)
 	for _, exempt := range exemptSHAs {
-		if strings.ToLower(bead) == strings.ToLower(exempt) ||
+		if strings.EqualFold(bead, exempt) ||
 			strings.HasPrefix(strings.ToLower(bead), strings.ToLower(exempt)) {
 			return true
 		}
