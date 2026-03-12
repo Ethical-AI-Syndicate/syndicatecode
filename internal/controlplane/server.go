@@ -2,7 +2,9 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +109,15 @@ type runtimeMetrics struct {
 	statusCounts      map[int]int64
 	endpointCounts    map[string]int64
 	toolExecutionBySE map[string]int64
+	lspRequestCounts  map[string]int64
+	lspErrorCounts    map[string]int64
+	lspLatencyMs      map[string]lspLatencySample
+}
+
+type lspLatencySample struct {
+	Count   int64 `json:"count"`
+	TotalMS int64 `json:"total_ms"`
+	MaxMS   int64 `json:"max_ms"`
 }
 
 type busEmitter struct{ bus *streamBus }
@@ -124,6 +135,9 @@ func newRuntimeMetrics(now time.Time) *runtimeMetrics {
 		statusCounts:      map[int]int64{},
 		endpointCounts:    map[string]int64{},
 		toolExecutionBySE: map[string]int64{},
+		lspRequestCounts:  map[string]int64{},
+		lspErrorCounts:    map[string]int64{},
+		lspLatencyMs:      map[string]lspLatencySample{},
 	}
 }
 
@@ -145,6 +159,40 @@ func (m *runtimeMetrics) recordToolExecution(sideEffect tools.SideEffect) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.toolExecutionBySE[string(sideEffect)]++
+}
+
+func (m *runtimeMetrics) recordLSPRequest(method string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	method = strings.TrimSpace(method)
+	if method == "" {
+		method = "unknown"
+	}
+	m.lspRequestCounts[method]++
+	sample := m.lspLatencyMs[method]
+	sample.Count++
+	durationMS := duration.Milliseconds()
+	sample.TotalMS += durationMS
+	if durationMS > sample.MaxMS {
+		sample.MaxMS = durationMS
+	}
+	m.lspLatencyMs[method] = sample
+}
+
+func (m *runtimeMetrics) recordLSPError(code string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "unknown"
+	}
+	m.lspErrorCounts[code]++
 }
 
 func (m *runtimeMetrics) snapshot(toolsRegistered int) map[string]interface{} {
@@ -169,6 +217,30 @@ func (m *runtimeMetrics) snapshot(toolsRegistered int) map[string]interface{} {
 		toolCounts[sideEffect] = count
 	}
 
+	lspRequestCounts := make(map[string]int64, len(m.lspRequestCounts))
+	for method, count := range m.lspRequestCounts {
+		lspRequestCounts[method] = count
+	}
+
+	lspErrorCounts := make(map[string]int64, len(m.lspErrorCounts))
+	for code, count := range m.lspErrorCounts {
+		lspErrorCounts[code] = count
+	}
+
+	lspLatency := make(map[string]map[string]int64, len(m.lspLatencyMs))
+	for method, sample := range m.lspLatencyMs {
+		avg := int64(0)
+		if sample.Count > 0 {
+			avg = sample.TotalMS / sample.Count
+		}
+		lspLatency[method] = map[string]int64{
+			"count":    sample.Count,
+			"avg_ms":   avg,
+			"max_ms":   sample.MaxMS,
+			"total_ms": sample.TotalMS,
+		}
+	}
+
 	return map[string]interface{}{
 		"started_at":              m.startedAt.Format(time.RFC3339Nano),
 		"uptime_seconds":          int64(time.Since(m.startedAt).Seconds()),
@@ -176,6 +248,9 @@ func (m *runtimeMetrics) snapshot(toolsRegistered int) map[string]interface{} {
 		"status_counts":           statusCounts,
 		"endpoint_counts":         endpointCounts,
 		"tool_executions_by_side": toolCounts,
+		"lsp_request_counts":      lspRequestCounts,
+		"lsp_error_counts":        lspErrorCounts,
+		"lsp_latency_ms":          lspLatency,
 		"tools_registered":        toolsRegistered,
 	}
 }
@@ -298,10 +373,12 @@ type auditExecutionRecorder struct {
 }
 
 func (r *auditExecutionRecorder) BeforeExecute(ctx context.Context, call tools.ToolCall, _ tools.ToolDefinition) {
-	payload, _ := json.Marshal(map[string]string{"tool_name": call.ToolName, "call_id": call.ID})
+	turnID, approvalID := toolExecutionIDs(call)
+	payload, _ := json.Marshal(map[string]string{"tool_name": call.ToolName, "call_id": call.ID, "turn_id": turnID, "approval_id": approvalID})
 	_ = r.store.Append(ctx, audit.Event{
 		ID:        uuid.New().String(),
 		SessionID: call.SessionID,
+		TurnID:    turnID,
 		Timestamp: time.Now().UTC(),
 		EventType: audit.EventToolInvoked,
 		Actor:     requestmeta.Actor(ctx),
@@ -311,25 +388,67 @@ func (r *auditExecutionRecorder) BeforeExecute(ctx context.Context, call tools.T
 
 func (r *auditExecutionRecorder) AfterExecute(ctx context.Context, call tools.ToolCall, _ tools.ToolDefinition, result *tools.ToolResult, execErr error, duration time.Duration) {
 	success := execErr == nil && result != nil && result.Success
+	turnID, approvalID := toolExecutionIDs(call)
+	outputRef := toolOutputRef(result)
 	if recErr := r.store.RecordToolInvocation(ctx, audit.ToolInvocationRecord{
 		ID:         uuid.New().String(),
 		SessionID:  call.SessionID,
+		TurnID:     turnID,
+		ApprovalID: approvalID,
 		ToolName:   call.ToolName,
 		Success:    success,
 		DurationMS: duration.Milliseconds(),
+		OutputRef:  outputRef,
 		CreatedAt:  time.Now().UTC(),
 	}); recErr != nil {
 		log.Printf("failed to record tool invocation: %v", recErr)
 	}
-	payload, _ := json.Marshal(map[string]string{"tool_name": call.ToolName, "success": fmt.Sprintf("%v", success)})
+	payload, _ := json.Marshal(map[string]string{"tool_name": call.ToolName, "success": fmt.Sprintf("%v", success), "turn_id": turnID, "approval_id": approvalID, "output_ref": outputRef})
 	_ = r.store.Append(ctx, audit.Event{
 		ID:        uuid.New().String(),
 		SessionID: call.SessionID,
+		TurnID:    turnID,
 		Timestamp: time.Now().UTC(),
 		EventType: audit.EventToolResult,
 		Actor:     requestmeta.Actor(ctx),
 		Payload:   payload,
 	})
+}
+
+func toolExecutionIDs(call tools.ToolCall) (string, string) {
+	turnID := ""
+	approvalID := ""
+	if call.Input != nil {
+		if value, ok := call.Input["turn_id"].(string); ok {
+			turnID = strings.TrimSpace(value)
+		}
+		if turnID == "" {
+			if value, ok := call.Input["_turn_id"].(string); ok {
+				turnID = strings.TrimSpace(value)
+			}
+		}
+		if value, ok := call.Input["approval_id"].(string); ok {
+			approvalID = strings.TrimSpace(value)
+		}
+		if approvalID == "" {
+			if value, ok := call.Input["_approval_id"].(string); ok {
+				approvalID = strings.TrimSpace(value)
+			}
+		}
+	}
+	return turnID, approvalID
+}
+
+func toolOutputRef(result *tools.ToolResult) string {
+	if result == nil || result.Output == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(result.Output)
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(h[:])
 }
 
 func initializeTooling(ctx context.Context, eventStore *audit.EventStore, sessionMgr *session.Manager) (*tools.Registry, *tools.Executor, error) {
@@ -610,6 +729,37 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		map[string]jsonObjectSchema{http.MethodGet: policyResponseSchema()},
 		http.HandlerFunc(s.handlePolicy),
 	)))
+	mux.Handle("/api/v1/events/types", s.withAuth(http.HandlerFunc(s.handleEventTypes)))
+	mux.Handle("/api/v1/lsp/diagnostics", s.withAuth(schemaValidationMiddleware(
+		nil,
+		map[string]jsonObjectSchema{http.MethodGet: lspDiagnosticsResponseSchema()},
+		http.HandlerFunc(s.handleLSPDiagnostics),
+	)))
+	mux.Handle("/api/v1/lsp/symbols", s.withAuth(schemaValidationMiddleware(
+		nil,
+		map[string]jsonObjectSchema{http.MethodGet: lspSymbolsResponseSchema()},
+		http.HandlerFunc(s.handleLSPSymbols),
+	)))
+	mux.Handle("/api/v1/lsp/hover", s.withAuth(schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: lspPositionRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: lspHoverResponseSchema()},
+		http.HandlerFunc(s.handleLSPHover),
+	)))
+	mux.Handle("/api/v1/lsp/definition", s.withAuth(schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: lspPositionRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: lspDefinitionResponseSchema()},
+		http.HandlerFunc(s.handleLSPDefinition),
+	)))
+	mux.Handle("/api/v1/lsp/references", s.withAuth(schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: lspPositionRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: lspReferencesResponseSchema()},
+		http.HandlerFunc(s.handleLSPReferences),
+	)))
+	mux.Handle("/api/v1/lsp/completions", s.withAuth(schemaValidationMiddleware(
+		map[string]jsonObjectSchema{http.MethodPost: lspPositionRequestSchema()},
+		map[string]jsonObjectSchema{http.MethodPost: lspCompletionsResponseSchema()},
+		http.HandlerFunc(s.handleLSPCompletions),
+	)))
 	mux.Handle("/api/v1/events/stream", s.withAuth(http.HandlerFunc(s.handleEventStream)))
 	mux.Handle("/api/v1/tools", s.withAuth(schemaValidationMiddleware(
 		nil,
@@ -654,7 +804,7 @@ func (s *Server) withTelemetry(next http.Handler) http.Handler {
 		if requestID == "" {
 			requestID = "n/a"
 		}
-		log.Printf("event=request method=%s path=%s status=%d duration_ms=%d actor=%s role=%s request_id=%s", r.Method, r.URL.Path, statusCode, time.Since(start).Milliseconds(), requestActor(r.Context()), requestRole(r.Context()), requestID) // #nosec G706 -- structured log with controlled format string
+		log.Printf("event=request method=%s path=%s status=%d duration_ms=%d actor=%s role=%s request_id=%s", r.Method, r.URL.Path, statusCode, time.Since(start).Milliseconds(), requestActor(r.Context()), requestRole(r.Context()), requestID) // #nosec G706
 	})
 }
 
@@ -1114,6 +1264,20 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request, ses
 	}
 }
 
+func parseIncludeArtifactsParam(raw string) (bool, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return false, nil
+	}
+
+	include, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("include_artifacts must be true or false")
+	}
+
+	return include, nil
+}
+
 func redactEventForExport(event audit.Event, policy *secrets.PolicyExecutor) (audit.Event, []string, bool, error) {
 	if event.EventType == audit.EventToolRedaction {
 		return audit.Event{
@@ -1174,20 +1338,6 @@ func summarizeRedactionReasons(reasons []string) string {
 	sort.Strings(ordered)
 
 	return strings.Join(ordered, "; ")
-}
-
-func parseIncludeArtifactsParam(raw string) (bool, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return false, nil
-	}
-
-	include, err := strconv.ParseBool(value)
-	if err != nil {
-		return false, fmt.Errorf("include_artifacts must be true or false")
-	}
-
-	return include, nil
 }
 
 func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
@@ -1353,7 +1503,7 @@ func (s *Server) createSessionTurn(w http.ResponseWriter, r *http.Request, sessi
 		sess, sessErr := s.sessionMgr.Get(r.Context(), sessionID)
 		if sessErr == nil {
 			sessionRunner := s.runner.WithConfig(agent.DefaultConfig(sess.TrustTier))
-			go s.runAgentTurn(context.WithoutCancel(r.Context()), sessionRunner, agent.AgentTurn{
+			go s.runAgentTurn(context.Background(), sessionRunner, agent.AgentTurn{ // #nosec G118
 				ID:        turn.ID,
 				SessionID: sessionID,
 				Message:   req.Message,
@@ -2283,17 +2433,13 @@ func requiresApproval(toolDef tools.ToolDefinition) bool {
 }
 
 func validateToolDataAccess(toolDef tools.ToolDefinition, input map[string]interface{}) error {
-	if toolDef.Source != tools.ToolSourcePlugin {
-		return nil
-	}
-
 	if full, ok := input["full_context"].(bool); ok && full {
-		return fmt.Errorf("plugin tools must request scoped context, full context is not allowed")
+		return fmt.Errorf("tools must request scoped context, full context is not allowed")
 	}
 
 	scope := toolDef.Security.FilesystemScope
 	if scope == "" {
-		return fmt.Errorf("plugin tool %s missing data access scope", toolDef.Name)
+		return nil
 	}
 
 	path, hasPath := input["path"].(string)
@@ -2303,11 +2449,11 @@ func validateToolDataAccess(toolDef tools.ToolDefinition, input map[string]inter
 
 	switch scope {
 	case "none", "metadata":
-		return fmt.Errorf("plugin tool %s does not allow path access for scope %s", toolDef.Name, scope)
-	case "workspace_read", "workspace_write", "secrets":
+		return fmt.Errorf("tool %s does not allow path access for scope %s", toolDef.Name, scope)
+	case "workspace_read", "workspace_write", "secrets", "repo":
 		return nil
 	default:
-		return fmt.Errorf("plugin tool %s has invalid data access scope %s", toolDef.Name, scope)
+		return fmt.Errorf("tool %s has invalid data access scope %s", toolDef.Name, scope)
 	}
 }
 

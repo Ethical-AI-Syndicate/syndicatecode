@@ -248,6 +248,55 @@ diff <session_id>
 
 Shows file mutations made during the session.
 
+### diff-rich
+
+Render file mutations grouped by file/hunk with richer formatting.
+
+```
+diff-rich <session_id> [event_type]
+```
+
+Arguments:
+- `session_id` - Session to inspect
+- `event_type` - Optional event filter (for example `file_mutation`)
+
+### diag
+
+Fetch diagnostics for a file in a session repository.
+
+```
+diag <session_id> <path>
+```
+
+### sym
+
+Fetch document symbols for a file.
+
+```
+sym <session_id> <path>
+```
+
+### hover
+
+Fetch hover information at a file position.
+
+```
+hover <session_id> <path> <line> <col>
+```
+
+### def
+
+Fetch definition locations at a file position.
+
+```
+def <session_id> <path> <line> <col>
+```
+
+LSP typed API failures are surfaced with explicit error types such as:
+- `lsp_server_unavailable`
+- `lsp_backend_unhealthy`
+- `lsp_request_timeout`
+
 ## Utility Commands
 
 ### exit

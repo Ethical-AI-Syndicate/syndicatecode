@@ -106,7 +106,7 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/tools": {
 				Owner:            "runtime",
 				Responsibilities: []string{"tool capability registry", "execution preflight checks"},
-				AllowedImports:   []string{"internal/patch"},
+				AllowedImports:   []string{"internal/git", "internal/patch"},
 			},
 			"internal/sandbox": {
 				Owner:            "runtime",

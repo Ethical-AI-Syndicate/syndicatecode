@@ -27,4 +27,5 @@ const (
 	EventToolInvoked  = "tool_invocation"
 	EventToolResult   = "tool_result"
 	EventFileMutation = "file_mutation"
+	EventLSPRequest   = "lsp_request"
 )

@@ -25,6 +25,12 @@ This returns all events in chronological order:
 - Model responses
 - Turn completion
 
+For mutation-focused review with grouped hunks and file headers:
+
+```
+diff-rich <session_id>
+```
+
 ## Viewing session list
 
 First, find the session you want to review:
@@ -55,6 +61,7 @@ Available event types include:
 - `approval_proposed` - Approval requests
 - `approval_decided` - Approval decisions
 - `file_mutation` - File changes
+- `lsp_request` - LSP lookups invoked through TUI/control-plane
 
 ## Understanding event data
 

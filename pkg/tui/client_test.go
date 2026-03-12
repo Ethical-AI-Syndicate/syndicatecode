@@ -82,3 +82,75 @@ func TestAPIClient_ListSessionEvents_Bead_l3d_15_4(t *testing.T) {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 }
+
+func TestAPIClient_GetEventTypes_UsesWrappedResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/events/types" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"event_types":["mcp.call","tool_result"]}`))
+	}))
+	defer ts.Close()
+
+	client := NewAPIClient(ts.URL)
+	types, err := client.GetEventTypes(context.Background())
+	if err != nil {
+		t.Fatalf("get event types failed: %v", err)
+	}
+	if len(types) != 2 || types[0] != "mcp.call" {
+		t.Fatalf("unexpected event types: %+v", types)
+	}
+}
+
+func TestAPIClient_GetDiagnostics_DecodesResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/lsp/diagnostics" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"diagnostics":[{"path":"main.go","severity":"error","message":"undefined","range":{"start_line":1,"start_col":1,"end_line":1,"end_col":4}}]}`))
+	}))
+	defer ts.Close()
+
+	client := NewAPIClient(ts.URL)
+	items, err := client.GetDiagnostics(context.Background(), "s-1", "main.go")
+	if err != nil {
+		t.Fatalf("get diagnostics failed: %v", err)
+	}
+	if len(items) != 1 || items[0].Range.EndCol != 4 {
+		t.Fatalf("unexpected diagnostics: %+v", items)
+	}
+}
+
+func TestAPIClient_GetHoverAndDefinition_DecodeResponses(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/lsp/hover":
+			_, _ = w.Write([]byte(`{"contents":"func main()","range":{"start_line":1,"start_col":1,"end_line":1,"end_col":4}}`))
+		case "/api/v1/lsp/definition":
+			_, _ = w.Write([]byte(`{"locations":[{"path":"main.go","range":{"start_line":10,"start_col":1,"end_line":10,"end_col":4}}]}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewAPIClient(ts.URL)
+	hover, err := client.GetHover(context.Background(), LSPPositionRequest{SessionID: "s-1", Path: "main.go", Line: 1, Col: 1})
+	if err != nil {
+		t.Fatalf("get hover failed: %v", err)
+	}
+	if hover == nil || hover.Contents == "" {
+		t.Fatalf("unexpected hover: %+v", hover)
+	}
+
+	locs, err := client.GetDefinition(context.Background(), LSPPositionRequest{SessionID: "s-1", Path: "main.go", Line: 1, Col: 1})
+	if err != nil {
+		t.Fatalf("get definition failed: %v", err)
+	}
+	if len(locs) != 1 || locs[0].Path != "main.go" {
+		t.Fatalf("unexpected definition locations: %+v", locs)
+	}
+}

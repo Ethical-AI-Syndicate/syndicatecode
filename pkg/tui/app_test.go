@@ -14,6 +14,10 @@ type mockAPI struct {
 	contextByTurn map[string][]ContextFragment
 	policy        PolicyDocument
 	replayBySess  map[string][]ReplayEvent
+	diagnostics   []LSPDiagnostic
+	symbols       []LSPSymbol
+	hover         *LSPHoverResponse
+	definitions   []LSPLocation
 	decisions     []decisionCall
 	newSessions   int
 	newTurns      int
@@ -104,6 +108,32 @@ func (m *mockAPI) GetEventTypes(ctx context.Context) ([]string, error) {
 		types = append(types, et)
 	}
 	return types, nil
+}
+
+func (m *mockAPI) GetDiagnostics(ctx context.Context, sessionID, path string) ([]LSPDiagnostic, error) {
+	_ = ctx
+	_ = sessionID
+	_ = path
+	return m.diagnostics, nil
+}
+
+func (m *mockAPI) GetSymbols(ctx context.Context, sessionID, path string) ([]LSPSymbol, error) {
+	_ = ctx
+	_ = sessionID
+	_ = path
+	return m.symbols, nil
+}
+
+func (m *mockAPI) GetHover(ctx context.Context, req LSPPositionRequest) (*LSPHoverResponse, error) {
+	_ = ctx
+	_ = req
+	return m.hover, nil
+}
+
+func (m *mockAPI) GetDefinition(ctx context.Context, req LSPPositionRequest) ([]LSPLocation, error) {
+	_ = ctx
+	_ = req
+	return m.definitions, nil
 }
 
 func TestApp_HelpAndQuit(t *testing.T) {
@@ -233,6 +263,11 @@ func TestCommandMappings_Bead_l3d_15_2(t *testing.T) {
 		"policy":    {Method: "GET", PathTemplate: "/api/v1/policy"},
 		"replay":    {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
 		"diff":      {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+		"diff-rich": {Method: "GET", PathTemplate: "/api/v1/sessions/{session_id}/events"},
+		"diag":      {Method: "GET", PathTemplate: "/api/v1/lsp/diagnostics"},
+		"sym":       {Method: "GET", PathTemplate: "/api/v1/lsp/symbols"},
+		"hover":     {Method: "POST", PathTemplate: "/api/v1/lsp/hover"},
+		"def":       {Method: "POST", PathTemplate: "/api/v1/lsp/definition"},
 	}
 
 	for command, expected := range required {
@@ -398,5 +433,57 @@ func TestJSONNumberToInt_RejectsNonIntegerNumbers_Bead_l3d_X_1(t *testing.T) {
 	}
 	if got, ok := jsonNumberToInt(10.0); !ok || got != 10 {
 		t.Fatalf("expected integral float to be accepted, got (%d, %t)", got, ok)
+	}
+}
+
+func TestApp_DiffRichCommand_RendersStructuredModel(t *testing.T) {
+	api := &mockAPI{
+		replayBySess: map[string][]ReplayEvent{
+			"s-1": {
+				{EventType: "file_mutation", Payload: []byte(`{"path":"a.go","type":"update","before_hash":"abc","after_hash":"def","hunks":[{"old_start":1,"old_lines":1,"new_start":1,"new_lines":1,"lines":["-old","+new"]}]}`)},
+			},
+		},
+	}
+	in := strings.NewReader("diff-rich s-1\nquit\n")
+	out := &bytes.Buffer{}
+	app := NewApp(api, in, out)
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	content := out.String()
+	if !strings.Contains(content, "> a.go (update)") || !strings.Contains(content, "@@ -1,1 +1,1 @@") {
+		t.Fatalf("expected rich diff output, got %q", content)
+	}
+}
+
+func TestApp_LSPCommands_RenderOutputs(t *testing.T) {
+	api := &mockAPI{
+		diagnostics: []LSPDiagnostic{{Path: "main.go", Severity: "error", Message: "undefined", Range: LSPRange{StartLine: 2, StartCol: 3}}},
+		symbols:     []LSPSymbol{{Kind: "function", Name: "main", Path: "main.go", Range: LSPRange{StartLine: 1}}},
+		hover:       &LSPHoverResponse{Contents: "func main()"},
+		definitions: []LSPLocation{{Path: "main.go", Range: LSPRange{StartLine: 10, StartCol: 1}}},
+	}
+	in := strings.NewReader("diag s-1 main.go\nsym s-1 main.go\nhover s-1 main.go 1 1\ndef s-1 main.go 1 1\nquit\n")
+	out := &bytes.Buffer{}
+	app := NewApp(api, in, out)
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	content := out.String()
+	if !strings.Contains(content, "main.go:2:3 [error] undefined") {
+		t.Fatalf("expected diagnostics output, got %q", content)
+	}
+	if !strings.Contains(content, "function main main.go:1") {
+		t.Fatalf("expected symbols output, got %q", content)
+	}
+	if !strings.Contains(content, "func main()") {
+		t.Fatalf("expected hover output, got %q", content)
+	}
+	if !strings.Contains(content, "main.go:10:1") {
+		t.Fatalf("expected definition output, got %q", content)
 	}
 }

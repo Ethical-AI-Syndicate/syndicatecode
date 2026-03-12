@@ -45,6 +45,13 @@ const (
 	ContractAPITurnCreateResponse    = "api.turns.create.response.v1"
 	ContractAPIToolExecuteRequest    = "api.tools.execute.request.v1"
 	ContractAPIToolExecuteResponse   = "api.tools.execute.response.v1"
+	ContractAPILSPPositionRequest    = "api.lsp.position.request.v1"
+	ContractAPILSPDiagnosticsResult  = "api.lsp.diagnostics.response.v1"
+	ContractAPILSPSymbolsResult      = "api.lsp.symbols.response.v1"
+	ContractAPILSPHoverResult        = "api.lsp.hover.response.v1"
+	ContractAPILSPDefinitionResult   = "api.lsp.definition.response.v1"
+	ContractAPILSPReferencesResult   = "api.lsp.references.response.v1"
+	ContractAPILSPCompletionsResult  = "api.lsp.completions.response.v1"
 	ContractAuditEvent               = "persistence.audit.event.v1"
 	ContractContextFragment          = "context.fragment.v1"
 	ContractApprovalRecord           = "approval.record.v1"
@@ -172,6 +179,66 @@ func mustDefaultRegistry() *Registry {
 				"id":      {Type: FieldTypeString, Required: true},
 				"success": {Type: FieldTypeBoolean, Required: true},
 				"output":  {Type: FieldTypeObject, Required: true},
+			},
+		},
+		{
+			ID:      ContractAPILSPPositionRequest,
+			Version: "v1",
+			Owner:   "controlplane",
+			Object: ObjectSchema{
+				"session_id": {Type: FieldTypeString, Required: true},
+				"path":       {Type: FieldTypeString, Required: true},
+				"line":       {Type: FieldTypeNumber, Required: true},
+				"col":        {Type: FieldTypeNumber, Required: true},
+			},
+		},
+		{
+			ID:      ContractAPILSPDiagnosticsResult,
+			Version: "v1",
+			Owner:   "controlplane",
+			Object: ObjectSchema{
+				"diagnostics": {Type: FieldTypeArray, Required: true},
+			},
+		},
+		{
+			ID:      ContractAPILSPSymbolsResult,
+			Version: "v1",
+			Owner:   "controlplane",
+			Object: ObjectSchema{
+				"symbols": {Type: FieldTypeArray, Required: true},
+			},
+		},
+		{
+			ID:      ContractAPILSPHoverResult,
+			Version: "v1",
+			Owner:   "controlplane",
+			Object: ObjectSchema{
+				"contents": {Type: FieldTypeString, Required: true},
+				"range":    {Type: FieldTypeObject, Required: true},
+			},
+		},
+		{
+			ID:      ContractAPILSPDefinitionResult,
+			Version: "v1",
+			Owner:   "controlplane",
+			Object: ObjectSchema{
+				"locations": {Type: FieldTypeArray, Required: true},
+			},
+		},
+		{
+			ID:      ContractAPILSPReferencesResult,
+			Version: "v1",
+			Owner:   "controlplane",
+			Object: ObjectSchema{
+				"locations": {Type: FieldTypeArray, Required: true},
+			},
+		},
+		{
+			ID:      ContractAPILSPCompletionsResult,
+			Version: "v1",
+			Owner:   "controlplane",
+			Object: ObjectSchema{
+				"items": {Type: FieldTypeArray, Required: true},
 			},
 		},
 		{

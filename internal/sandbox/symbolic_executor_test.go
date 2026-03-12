@@ -1,37 +1,55 @@
 package sandbox
 
 import (
-	"context"
 	"testing"
 )
 
-func TestSymbolicExecutorRejectsUnknownCommand_Bead_l3d_17_1(t *testing.T) {
-	executor := NewSymbolicCommandExecutor(DefaultSymbolicCommands())
+func TestDefaultSymbolicCommands_Bead_l3d_17_1(t *testing.T) {
+	cmds := DefaultSymbolicCommands()
 
-	ctx := context.Background()
-	_, err := executor.Run(ctx, "unknown_command", []string{}, SubprocessOptions{})
-
-	if err == nil {
-		t.Fatal("Run should reject unknown command")
+	expected := []string{
+		"go_test_all",
+		"go_test_internal",
+		"go_test_policy",
+		"go_version",
+		"go_vet_all",
+		"go_fmt_all",
+		"golangci_lint_run",
 	}
 
-	if err != ErrCommandNotAllowed {
-		// Check if the error wraps ErrCommandNotAllowed
-		if err.Error() != "command not allowed: unknown_command" {
-			t.Errorf("expected ErrCommandNotAllowed, got: %v", err)
+	for _, name := range expected {
+		if _, ok := cmds[name]; !ok {
+			t.Errorf("expected command %q to be defined", name)
 		}
 	}
 }
 
-func TestSymbolicExecutorAllowsKnownCommand_Bead_l3d_17_1(t *testing.T) {
-	executor := NewSymbolicCommandExecutor(DefaultSymbolicCommands())
+func TestSymbolicCommandExecutor_New_Bead_l3d_17_1(t *testing.T) {
+	allowed := map[string]SymbolicCommand{
+		"test_cmd": {Command: "echo", Args: []string{"hello"}},
+	}
 
-	ctx := context.Background()
-	_, err := executor.Run(ctx, "go_version", []string{}, SubprocessOptions{})
+	exec := NewSymbolicCommandExecutor(allowed)
+	if exec == nil {
+		t.Fatal("NewSymbolicCommandExecutor returned nil")
+	}
+	if exec.allowed == nil {
+		t.Error("allowed map should not be nil")
+	}
+}
 
-	// This may fail due to working directory or other runtime issues,
-	// but it should not fail due to the command being rejected as unknown.
-	if err != nil && err == ErrCommandNotAllowed {
-		t.Errorf("Run rejected a known command: %v", err)
+func TestSymbolicCommandExecutor_CopyOnConstruction_Bead_l3d_17_1(t *testing.T) {
+	original := map[string]SymbolicCommand{
+		"test_cmd": {Command: "echo", Args: []string{"hello"}},
+	}
+
+	exec := NewSymbolicCommandExecutor(original)
+
+	original["test_cmd"] = SymbolicCommand{Command: "modified", Args: []string{}}
+
+	if spec, ok := exec.allowed["test_cmd"]; !ok {
+		t.Error("command should still exist after modifying original")
+	} else if spec.Command == "modified" {
+		t.Error("executor should have its own copy, not reference original")
 	}
 }

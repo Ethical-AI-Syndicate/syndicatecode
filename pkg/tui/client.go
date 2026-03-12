@@ -140,11 +140,57 @@ func (c *APIClient) GetPolicyRoute(ctx context.Context, trustTier, sensitivity, 
 }
 
 func (c *APIClient) GetEventTypes(ctx context.Context) ([]string, error) {
-	var result []string
+	var result struct {
+		EventTypes []string `json:"event_types"`
+	}
 	if err := c.doJSON(ctx, http.MethodGet, "/events/types", nil, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return result.EventTypes, nil
+}
+
+func (c *APIClient) GetDiagnostics(ctx context.Context, sessionID, path string) ([]LSPDiagnostic, error) {
+	query := url.Values{}
+	query.Set("session_id", sessionID)
+	query.Set("path", path)
+	var result struct {
+		Diagnostics []LSPDiagnostic `json:"diagnostics"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/lsp/diagnostics?"+query.Encode(), nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Diagnostics, nil
+}
+
+func (c *APIClient) GetSymbols(ctx context.Context, sessionID, path string) ([]LSPSymbol, error) {
+	query := url.Values{}
+	query.Set("session_id", sessionID)
+	query.Set("path", path)
+	var result struct {
+		Symbols []LSPSymbol `json:"symbols"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/lsp/symbols?"+query.Encode(), nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Symbols, nil
+}
+
+func (c *APIClient) GetHover(ctx context.Context, req LSPPositionRequest) (*LSPHoverResponse, error) {
+	var result LSPHoverResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/lsp/hover", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *APIClient) GetDefinition(ctx context.Context, req LSPPositionRequest) ([]LSPLocation, error) {
+	var result struct {
+		Locations []LSPLocation `json:"locations"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/lsp/definition", req, &result); err != nil {
+		return nil, err
+	}
+	return result.Locations, nil
 }
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in interface{}, out interface{}) error {

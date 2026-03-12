@@ -37,12 +37,9 @@ func (s *PatchSafetyService) Apply(ctx context.Context, patchText, sessionID, tu
 		return nil, nil, err
 	}
 
-	existingFiles, err := s.readExistingFiles(proposal)
-	if err != nil {
-		return nil, nil, err
-	}
+	existingFiles := s.readExistingFiles(proposal)
 
-	validator := patch.NewValidator(s.engine.RepoRoot())
+	validator := patch.NewValidator(patch.EngineRepoRoot(s.engine))
 	if err := validator.ValidatePreApply(proposal, existingFiles); err != nil {
 		return nil, nil, err
 	}
@@ -59,7 +56,7 @@ func (s *PatchSafetyService) Apply(ctx context.Context, patchText, sessionID, tu
 		anchor, anchorErr := anchors.CreateAnchor(ctx, gitops.AnchorRequest{
 			SessionID:     sessionID,
 			TurnID:        turnID,
-			RepoPath:      s.engine.RepoRoot(),
+			RepoPath:      patch.EngineRepoRoot(s.engine),
 			MutationScope: mutationScope,
 			EnableGitRef:  true,
 		})
@@ -87,7 +84,7 @@ func (s *PatchSafetyService) Apply(ctx context.Context, patchText, sessionID, tu
 	}
 
 	for i := range mutations {
-		absPath := filepath.Join(s.engine.RepoRoot(), filepath.Clean(mutations[i].Path))
+		absPath := filepath.Join(patch.EngineRepoRoot(s.engine), filepath.Clean(mutations[i].Path))
 		hash, hashErr := patch.HashFile(absPath)
 		if hashErr == nil {
 			mutations[i].AfterHash = hash
@@ -135,21 +132,22 @@ func (s *PatchSafetyService) proposalFromPatch(ctx context.Context, patchText, s
 	return proposal, nil
 }
 
-func (s *PatchSafetyService) readExistingFiles(proposal patch.Proposal) (map[string]string, error) {
+func (s *PatchSafetyService) readExistingFiles(proposal patch.Proposal) map[string]string {
 	existing := make(map[string]string)
 	for _, op := range proposal.Operations {
-		absPath := filepath.Join(s.engine.RepoRoot(), filepath.Clean(op.TargetPath))
+		absPath := filepath.Join(patch.EngineRepoRoot(s.engine), filepath.Clean(op.TargetPath))
+		// #nosec G304 // filepath.Clean and EngineRepoRoot provide path safety
 		data, err := os.ReadFile(absPath)
 		if err != nil {
 			continue
 		}
 		existing[op.TargetPath] = string(data)
 	}
-	return existing, nil
+	return existing
 }
 
 func (s *PatchSafetyService) currentHash(path string) (string, error) {
-	absPath := filepath.Join(s.engine.RepoRoot(), filepath.Clean(path))
+	absPath := filepath.Join(patch.EngineRepoRoot(s.engine), filepath.Clean(path))
 	return patch.HashFile(absPath)
 }
 

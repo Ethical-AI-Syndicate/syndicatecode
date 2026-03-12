@@ -144,6 +144,34 @@ func approvalRecordSchema() jsonObjectSchema {
 	return jsonObjectSchema{}
 }
 
+func lspPositionRequestSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPILSPPositionRequest)
+}
+
+func lspDiagnosticsResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPILSPDiagnosticsResult)
+}
+
+func lspSymbolsResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPILSPSymbolsResult)
+}
+
+func lspHoverResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPILSPHoverResult)
+}
+
+func lspDefinitionResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPILSPDefinitionResult)
+}
+
+func lspReferencesResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPILSPReferencesResult)
+}
+
+func lspCompletionsResponseSchema() jsonObjectSchema {
+	return mustSchemaFromRegistry(validation.ContractAPILSPCompletionsResult)
+}
+
 func schemaValidationMiddlewareWithStatus(requestSchemas, responseSchemas map[string]jsonObjectSchema, responseSchemasByStatus responseSchemaByStatus, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if reqSchema, ok := requestSchemas[r.Method]; ok {

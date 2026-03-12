@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -112,6 +113,50 @@ func TestSessionsEndpoint_ReturnsInvalidSchemaForMissingFields(t *testing.T) {
 	server.registerRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewBufferString(`{"repo_path":"/tmp/repo"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	var resp schemaErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode schema error response: %v", err)
+	}
+	if resp.Error != "invalid_schema" {
+		t.Fatalf("expected invalid_schema error, got %s", resp.Error)
+	}
+}
+
+func TestLSPHoverEndpoint_ReturnsInvalidSchemaForMissingPosition(t *testing.T) {
+	eventStore, err := audit.NewEventStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("failed to create event store: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := eventStore.Close(); closeErr != nil {
+			t.Fatalf("failed to close event store: %v", closeErr)
+		}
+	})
+
+	sessionMgr := session.NewManager(eventStore)
+	created, err := sessionMgr.Create(context.Background(), t.TempDir(), "tier1")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	server := &Server{
+		sessionMgr: sessionMgr,
+		eventStore: eventStore,
+		httpServer: &http.Server{},
+		lspBroker:  NoopLSPBroker{},
+	}
+
+	mux := http.NewServeMux()
+	server.registerRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/lsp/hover", bytes.NewBufferString(`{"session_id":"`+created.ID+`","path":"main.go","col":1}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

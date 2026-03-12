@@ -5,81 +5,70 @@ import (
 	"testing"
 )
 
-// MockProvider is a simple Provider implementation for testing.
-type MockProvider struct {
-	name   string
-	models map[string]LanguageModel
+type mockProvider struct{}
+
+func (m mockProvider) Name() string { return "mock" }
+func (m mockProvider) Model(modelID string) LanguageModel {
+	return &mockLanguageModel{id: modelID}
 }
 
-func (mp *MockProvider) Name() string {
-	return mp.name
-}
-
-func (mp *MockProvider) Model(id string) LanguageModel {
-	return mp.models[id]
-}
-
-// MockLanguageModel is a simple LanguageModel implementation for testing.
-type MockLanguageModel struct {
+type mockLanguageModel struct {
 	id string
 }
 
-func (m *MockLanguageModel) Stream(ctx context.Context, p Params) (<-chan StreamEvent, error) {
-	// Return an empty channel for testing
+func (m *mockLanguageModel) Stream(ctx context.Context, p Params) (<-chan StreamEvent, error) {
 	ch := make(chan StreamEvent)
 	close(ch)
 	return ch, nil
 }
 
-func (m *MockLanguageModel) ModelID() string {
-	return m.id
-}
+func (m *mockLanguageModel) ModelID() string { return m.id }
 
-func TestNewRegistry_Bead_l3d_16_2(t *testing.T) {
-	reg := NewRegistry()
-	if reg == nil {
+func TestRegistry_NewRegistry_Bead_l3d_17_1(t *testing.T) {
+	r := NewRegistry()
+	if r == nil {
 		t.Fatal("NewRegistry returned nil")
 	}
+	if r.providers == nil {
+		t.Error("providers map should not be nil")
+	}
 }
 
-func TestRegister_Bead_l3d_16_2(t *testing.T) {
-	reg := NewRegistry()
-	mock := &MockLanguageModel{id: "test-model"}
-	provider := &MockProvider{name: "test-provider", models: map[string]LanguageModel{"test": mock}}
+func TestRegistry_Register_Bead_l3d_17_1(t *testing.T) {
+	r := NewRegistry()
+	p := mockProvider{}
 
-	reg.Register("test-provider", provider)
+	r.Register("test-provider", p)
 
-	// Verify registration by resolving
-	model, err := reg.Resolve("test-provider", "test")
+	r.mu.RLock()
+	_, ok := r.providers["test-provider"]
+	r.mu.RUnlock()
+
+	if !ok {
+		t.Error("provider should be registered")
+	}
+}
+
+func TestRegistry_Resolve_Bead_l3d_17_1(t *testing.T) {
+	r := NewRegistry()
+	p := mockProvider{}
+
+	r.Register("test-provider", p)
+
+	lm, err := r.Resolve("test-provider", "test-model")
 	if err != nil {
-		t.Fatalf("Resolve failed after Register: %v", err)
+		t.Errorf("unexpected error: %v", err)
 	}
-	if model == nil {
-		t.Fatal("Resolve returned nil model")
-	}
-}
-
-func TestResolve_Bead_l3d_16_2(t *testing.T) {
-	reg := NewRegistry()
-	mock := &MockLanguageModel{id: "my-model"}
-	provider := &MockProvider{name: "my-provider", models: map[string]LanguageModel{"model1": mock}}
-
-	reg.Register("my-provider", provider)
-
-	model, err := reg.Resolve("my-provider", "model1")
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-	if model == nil {
-		t.Fatal("Resolve returned nil model")
+	if lm == nil {
+		t.Error("expected non-nil LanguageModel")
 	}
 }
 
-func TestResolveUnregisteredProvider_Bead_l3d_16_2(t *testing.T) {
-	reg := NewRegistry()
+func TestRegistry_ResolveNotFound_Bead_l3d_17_1(t *testing.T) {
+	r := NewRegistry()
 
-	_, err := reg.Resolve("nonexistent", "model1")
+	_, err := r.Resolve("nonexistent", "test-model")
 	if err == nil {
-		t.Fatal("Resolve should fail for unregistered provider")
+		t.Error("expected error for unregistered provider")
 	}
 }
