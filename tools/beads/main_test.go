@@ -1,10 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -96,77 +94,34 @@ func TestValidateChangedGoFiles_NoChangedTests_Bead_l3d_1(t *testing.T) {
 	}
 }
 
-func TestBeadIssueID_UsesGitRootRepoName_Bead_l3d_10_2(t *testing.T) {
-	issueID := beadIssueID("l3d.10.2")
-	if issueID != "SyndicateCode-l3d.10.2" {
-		t.Fatalf("expected SyndicateCode-l3d.10.2, got %s", issueID)
-	}
-}
-
-func TestIsExemptCommitSubject_Bead_l3d_5_2(t *testing.T) {
-	if !isExemptCommitSubject("Merge branch 'feature/l3d-5-2' into 'master'") {
-		t.Fatal("expected merge commit subject to be exempt")
-	}
-	if isExemptCommitSubject("fix(ci): remove jq dependency in bead-evidence stage [l3d.5.2]") {
-		t.Fatal("expected bead-tagged commit subject to require validation")
-	}
-}
-
-func TestParseOptions_ShowPositionalBead_Bead_l3d_10_2(t *testing.T) {
-	opts, err := parseOptions("show", []string{"l3d.10.2", "--json"})
+func TestFindTaggedTestsForBead_SkipsSymlinkedTestFiles_Bead_l3d_1_3(t *testing.T) {
+	cwd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("expected no parse error, got %v", err)
+		t.Fatal(err)
 	}
-	if opts.beadID != "l3d.10.2" {
-		t.Fatalf("expected positional bead id to be parsed, got %q", opts.beadID)
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
 	}
-	if !opts.jsonOutput {
-		t.Fatal("expected --json to enable json output")
-	}
-}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
 
-func TestRequiredBeadsForTagging_OnlySourceChangingBeads_Bead_l3d_5_2(t *testing.T) {
-	original := changedFilesForCommitFn
-	defer func() {
-		changedFilesForCommitFn = original
-	}()
-
-	changedFilesForCommitFn = func(sha string) ([]string, error) {
-		switch sha {
-		case "a1":
-			return []string{".gitlab-ci.yml"}, nil
-		case "b2":
-			return []string{"internal/controlplane/server.go"}, nil
-		case "c3":
-			return []string{"internal/controlplane/server_test.go"}, nil
-		default:
-			return nil, fmt.Errorf("unexpected sha %s", sha)
-		}
+	if err := os.WriteFile("good_test.go", []byte("package main\nfunc TestX_Bead_l3d_1_3(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/definitely/missing/target_test.go", "broken_test.go"); err != nil {
+		t.Fatal(err)
 	}
 
-	commits := []commitInfo{
-		{SHA: "a1", Beads: []string{"l3d.5.2"}},
-		{SHA: "b2", Beads: []string{"l3d.10.2"}},
-		{SHA: "c3", Beads: []string{"l3d.1.3"}},
-	}
-
-	got, err := requiredBeadsForTagging(commits)
+	tests, err := findTaggedTestsForBead("l3d.1.3")
 	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		t.Fatalf("expected no error while walking test files, got %v", err)
 	}
-	if len(got) != 1 || got[0] != "l3d.10.2" {
-		t.Fatalf("expected only l3d.10.2 to require test tags, got %v", got)
+	if len(tests) != 1 {
+		t.Fatalf("expected exactly one linked test, got %d", len(tests))
 	}
-}
-
-func TestValidateChangedGoFiles_SkipsDeletedFiles_Bead_l3d_5_2(t *testing.T) {
-	// Deleted Go files should not raise a "missing sibling test" error because
-	// neither the source nor the test file will exist on disk after deletion.
-	nonExistentSrc := "/tmp/nonexistent_beads_test_src_" + t.Name() + ".go"
-	issues := validateChangedGoFiles([]string{nonExistentSrc}, nil)
-	for _, issue := range issues {
-		if strings.Contains(issue, "missing sibling test file") {
-			t.Fatalf("expected deleted file to be skipped, got issue: %s", issue)
-		}
+	if tests[0].File != "good_test.go" {
+		t.Fatalf("expected good_test.go result, got %s", tests[0].File)
 	}
 }

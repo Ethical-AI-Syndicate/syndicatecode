@@ -1,0 +1,76 @@
+{
+  "bead_id": "l3d.10.2",
+  "bead_issue_id": "bead-l3d-10-2-export-pipeline-l3d.10.2",
+  "generated_at_utc": "2026-03-09T20:22:09Z",
+  "generator_version": "v2",
+  "head_sha": "70b237194cfbdd6419e9a36805619d784de538a1",
+  "range": "origin/master..HEAD",
+  "commits": [
+    {
+      "sha": "70b237194cfbdd6419e9a36805619d784de538a1",
+      "subject": "chore(ci): retrigger pipeline after master sync [l3d.10.2]",
+      "beads": [
+        "l3d.10.2"
+      ]
+    },
+    {
+      "sha": "13e141c043f8f61f417cf7ac3b45ddd12f64452e",
+      "subject": "bd:l3d.10.2 refresh evidence after full CI pass [l3d.10.2]",
+      "beads": [
+        "l3d.10.2"
+      ]
+    },
+    {
+      "sha": "3a90add29e8058ed66379296245f6d8c4c78d0b0",
+      "subject": "test(controlplane): add bead-tagged export coverage [l3d.10.2]",
+      "beads": [
+        "l3d.10.2"
+      ]
+    },
+    {
+      "sha": "0ea03fbe2d5823d7c10ef5f8f320b7f70dc26892",
+      "subject": "bd:l3d.10.2 implement explicit session export filtering pipeline",
+      "beads": [
+        "l3d.10.2"
+      ]
+    }
+  ],
+  "changed_files": [
+    "bead-evidence/l3d.10.2.json",
+    "internal/controlplane/server.go",
+    "internal/controlplane/server_test.go"
+  ],
+  "changed_go_files": [
+    "internal/controlplane/server.go"
+  ],
+  "changed_test_files": [
+    "internal/controlplane/server_test.go"
+  ],
+  "linked_tests": [
+    {
+      "file": "internal/controlplane/server_test.go",
+      "line": 19,
+      "test_name": "TestHandleSessionByID_ExportPipeline_Bead_l3d_10_2",
+      "beads": [
+        "l3d.10.2"
+      ]
+    }
+  ],
+  "ci_phases": {
+    "bead-verify": "pass",
+    "build": "pass",
+    "format": "pass",
+    "lint": "pass",
+    "security": "pass",
+    "test": "pass"
+  },
+  "summary": {
+    "credible_for_closure": true,
+    "reasons": null
+  },
+  "acceptance_criteria_evidence": [
+    "PR acceptance checklist required by template",
+    "Bead-tagged tests linked by naming convention",
+    "CI phase states recorded at generation time"
+  ]
+}

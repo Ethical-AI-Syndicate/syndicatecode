@@ -179,6 +179,14 @@ func (s *EventStore) QueryAll(ctx context.Context) ([]Event, error) {
 	return s.scanRows(rows)
 }
 
+func (s *EventStore) DeleteBySession(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed deleting events for session %s: %w", sessionID, err)
+	}
+	return nil
+}
+
 func (s *EventStore) scanRows(rows *sql.Rows) ([]Event, error) {
 	var events []Event
 	for rows.Next() {
