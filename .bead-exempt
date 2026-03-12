@@ -16,3 +16,10 @@ e64f0a4
 # Merge commits from master that don't have bead-tagged tests
 # These are dependency merges from master that predate our branch
 989a576
+
+# These beads have tests but they exist in master files that we didn't change
+# Tests exist but in files not modified by this branch
+c667b6d  # l3d.16.1 - models interface
+22d69be  # l3d.16.2 - models registry
+57eae9e  # l3d.16.3 - anthropic provider
+c86ae33  # l3d.15.5 - context budget allocator
