@@ -78,6 +78,20 @@ func (t *ToolDefinition) Validate() error {
 	if t.Limits.MaxOutputBytes <= 0 {
 		return fmt.Errorf("invalid max output: %d", t.Limits.MaxOutputBytes)
 	}
+
+	// Validate SideEffect is a known value.
+	switch t.SideEffect {
+	case SideEffectNone, SideEffectRead, SideEffectWrite, SideEffectExecute, SideEffectNetwork:
+		// valid
+	default:
+		return fmt.Errorf("unknown side_effect %q: must be one of none, read, write, execute, network", t.SideEffect)
+	}
+
+	// Filesystem-affecting tools must declare a filesystem scope.
+	if (t.SideEffect == SideEffectWrite || t.SideEffect == SideEffectExecute) && t.Security.FilesystemScope == "" {
+		return fmt.Errorf("side_effect %q requires security.filesystem_scope to be set", t.SideEffect)
+	}
+
 	return nil
 }
 

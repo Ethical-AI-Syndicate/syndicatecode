@@ -75,6 +75,7 @@ func TestRegistry_List(t *testing.T) {
 		InputSchema:  map[string]FieldSchema{},
 		OutputSchema: map[string]FieldSchema{},
 		Limits:       ExecutionLimits{TimeoutSeconds: 30, MaxOutputBytes: 1000},
+		Security:     SecurityMetadata{FilesystemScope: "repo"},
 	})
 
 	tools := reg.List()

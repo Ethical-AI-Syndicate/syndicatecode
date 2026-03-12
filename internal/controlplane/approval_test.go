@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/tools"
 )
 
@@ -18,7 +20,7 @@ func TestApprovalManager_ProposeAndApproveFlow(t *testing.T) {
 	mgr := NewApprovalManager(10 * time.Minute)
 	call := tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{"path": "a.go"}}
 
-	approval, err := mgr.Propose("s1", call, tools.SideEffectWrite, []string{"a.go"})
+	approval, err := mgr.Propose("s1", call, tools.SideEffectWrite, []string{"a.go"}, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -52,7 +54,7 @@ func TestApprovalManager_ProposeAndApproveFlow(t *testing.T) {
 
 func TestApprovalManager_Deny(t *testing.T) {
 	mgr := NewApprovalManager(10 * time.Minute)
-	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil)
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -71,7 +73,7 @@ func TestApprovalManager_Deny(t *testing.T) {
 
 func TestApprovalManager_ExpiryCancelsPending(t *testing.T) {
 	mgr := NewApprovalManager(1 * time.Millisecond)
-	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil)
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -97,7 +99,7 @@ func TestApprovalManager_ExpiryEmitsTransitionCausality(t *testing.T) {
 		transitions = append(transitions, transition)
 	}))
 
-	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil)
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
 	if err != nil {
 		t.Fatalf("propose failed: %v", err)
 	}
@@ -121,6 +123,33 @@ func TestApprovalManager_ExpiryEmitsTransitionCausality(t *testing.T) {
 	}
 	if last.Trigger != "expired" {
 		t.Fatalf("expected trigger expired, got %s", last.Trigger)
+	}
+}
+
+func TestApprovalManager_DecideExpiredEmitsTransitionCausality(t *testing.T) {
+	transitions := make([]ApprovalTransition, 0)
+	mgr := NewApprovalManager(1*time.Millisecond, WithTransitionRecorder(func(transition ApprovalTransition) {
+		transitions = append(transitions, transition)
+	}))
+
+	approval, err := mgr.Propose("s1", tools.ToolCall{ToolName: "write_file", Input: map[string]interface{}{}}, tools.SideEffectWrite, nil, nil)
+	if err != nil {
+		t.Fatalf("propose failed: %v", err)
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	_, err = mgr.Decide(approval.ID, "approve", "")
+	if !errors.Is(err, ErrApprovalExpired) {
+		t.Fatalf("expected ErrApprovalExpired, got %v", err)
+	}
+
+	if len(transitions) < 2 {
+		t.Fatalf("expected expiry transition to be recorded, got %d transitions", len(transitions))
+	}
+
+	last := transitions[len(transitions)-1]
+	if last.FromState != ApprovalStatePending || last.ToState != ApprovalStateCancelled || last.Trigger != "expired" {
+		t.Fatalf("expected pending->cancelled expired transition, got %s->%s trigger=%s", last.FromState, last.ToState, last.Trigger)
 	}
 }
 
@@ -149,7 +178,7 @@ func TestHandleApprovalsAndDecision(t *testing.T) {
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 on approve, got %d", decisionRec.Code)
 	}
@@ -182,7 +211,7 @@ func TestHandleToolExecute_ApprovalTransitionEventsCarryCausalityPayload(t *test
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 on approve, got %d", decisionRec.Code)
 	}
@@ -265,6 +294,7 @@ func newApprovalTestServer(t *testing.T) *Server {
 		InputSchema:      map[string]tools.FieldSchema{"path": {Type: "string"}, "content": {Type: "string"}},
 		OutputSchema:     map[string]tools.FieldSchema{"bytes_written": {Type: "integer"}},
 		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024, AllowedPaths: []string{"/tmp"}},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
 	}); err != nil {
 		t.Fatalf("register write_file failed: %v", err)
 	}
@@ -276,8 +306,22 @@ func newApprovalTestServer(t *testing.T) *Server {
 		InputSchema:      map[string]tools.FieldSchema{"command": {Type: "string"}},
 		OutputSchema:     map[string]tools.FieldSchema{"exit_code": {Type: "integer"}},
 		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
 	}); err != nil {
 		t.Fatalf("register restricted_shell failed: %v", err)
+	}
+	if err := registry.Register(tools.ToolDefinition{
+		Name:             "symbolic_shell",
+		Version:          "1",
+		TrustLevel:       "tier1",
+		SideEffect:       tools.SideEffectExecute,
+		ApprovalRequired: true,
+		InputSchema:      map[string]tools.FieldSchema{"command": {Type: "string"}},
+		OutputSchema:     map[string]tools.FieldSchema{"exit_code": {Type: "integer"}},
+		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
+	}); err != nil {
+		t.Fatalf("register symbolic_shell failed: %v", err)
 	}
 	if err := registry.Register(tools.ToolDefinition{
 		Name:             "apply_patch",
@@ -287,14 +331,21 @@ func newApprovalTestServer(t *testing.T) *Server {
 		InputSchema:      map[string]tools.FieldSchema{"patch": {Type: "string"}},
 		OutputSchema:     map[string]tools.FieldSchema{"files_modified": {Type: "array"}},
 		Limits:           tools.ExecutionLimits{TimeoutSeconds: 5, MaxOutputBytes: 1024},
+		Security:         tools.SecurityMetadata{FilesystemScope: "repo"},
 	}); err != nil {
 		t.Fatalf("register apply_patch failed: %v", err)
 	}
 
 	executor := tools.NewExecutor(registry, nil)
 	executor.RegisterHandler("echo", tools.EchoHandler())
-	executor.RegisterHandler("write_file", tools.WriteFileHandler("/tmp"))
+	executor.RegisterHandler("write_file", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		content, _ := input["content"].(string)
+		return map[string]interface{}{"bytes_written": len(content)}, nil
+	})
 	executor.RegisterHandler("restricted_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		return map[string]interface{}{"exit_code": 0}, nil
+	})
+	executor.RegisterHandler("symbolic_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
 		return map[string]interface{}{"exit_code": 0}, nil
 	})
 	executor.RegisterHandler("apply_patch", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
@@ -384,6 +435,45 @@ func TestHandleToolExecuteRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestApprovalPropose_StoresExecutionContext(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewApprovalManager(5*time.Minute, nil)
+
+	call := tools.ToolCall{ToolName: "run_tests", SessionID: "sess-1"}
+	ctx := json.RawMessage(`{"executable":"go","args":["test","./..."],"isolation_level":"l1"}`)
+
+	approval, err := mgr.Propose("sess-1", call, tools.SideEffectExecute, []string{"/repo"}, ctx)
+	if err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+	if len(approval.ExecutionContext) == 0 {
+		t.Fatal("expected ExecutionContext to be set on approval")
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(approval.ExecutionContext, &decoded); err != nil {
+		t.Fatalf("ExecutionContext is not valid JSON: %v", err)
+	}
+	if decoded["executable"] != "go" {
+		t.Errorf("executable: got %v, want 'go'", decoded["executable"])
+	}
+}
+
+func TestApprovalPropose_NilContextIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewApprovalManager(5*time.Minute, nil)
+	call := tools.ToolCall{ToolName: "echo", SessionID: "sess-2"}
+
+	approval, err := mgr.Propose("sess-2", call, tools.SideEffectNone, nil, nil)
+	if err != nil {
+		t.Fatalf("Propose with nil context: %v", err)
+	}
+	if approval.ExecutionContext != nil {
+		t.Error("expected nil ExecutionContext when none provided")
+	}
+}
+
 func TestHandleToolExecuteRecordsAuditSafeRedactionEvents(t *testing.T) {
 	server := newApprovalTestServer(t)
 	body := bytes.NewBufferString(`{"tool_name":"echo","input":{"message":"AKIA1234567890ABCDEF"}}`)
@@ -417,4 +507,268 @@ func TestHandleToolExecuteRecordsAuditSafeRedactionEvents(t *testing.T) {
 	if !found {
 		t.Fatalf("expected tool_output_redaction event to be recorded")
 	}
+}
+
+func TestHandleApprovalByID_ArgumentMutationCancelsApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+
+	body := bytes.NewBufferString(`{"tool_name":"write_file","input":{"path":"/tmp/x.txt","content":"hello"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+	server.handleToolExecute(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for pending approval, got %d", rec.Code)
+	}
+
+	var approval Approval
+	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil {
+		t.Fatalf("decode approval: %v", err)
+	}
+
+	server.approvalMgr.mu.Lock()
+	server.approvalMgr.items[approval.ID].Call.Input["content"] = "mutated"
+	server.approvalMgr.mu.Unlock()
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
+	if decisionRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when approval arguments mutated, got %d", decisionRec.Code)
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state, got %s", updated.State)
+	}
+	if !strings.Contains(updated.DecisionReason, "mutated") {
+		t.Fatalf("expected mutation diagnostic reason, got %q", updated.DecisionReason)
+	}
+}
+
+func TestHandleApprovalByID_ExecutionFailureCancelsApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.toolExecutor.RegisterHandler("write_file", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		return nil, errors.New("synthetic write failure")
+	})
+
+	body := bytes.NewBufferString(`{"tool_name":"write_file","input":{"path":"/tmp/x.txt","content":"hello"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tools/execute", body)
+	rec := httptest.NewRecorder()
+	server.handleToolExecute(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for pending approval, got %d", rec.Code)
+	}
+
+	var approval Approval
+	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil {
+		t.Fatalf("decode approval: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
+	if decisionRec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 on execution failure, got %d", decisionRec.Code)
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state after failed execution, got %s", updated.State)
+	}
+	if !strings.Contains(updated.DecisionReason, "execution failed") {
+		t.Fatalf("expected execution diagnostic reason, got %q", updated.DecisionReason)
+	}
+}
+
+func TestServerRequestApproval_EnforcesTrustTierPolicyBeforePropose(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier0")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	_, err = server.RequestApproval(context.Background(), tools.ToolCall{
+		ToolName:  "restricted_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go version"},
+	})
+	if err == nil {
+		t.Fatal("expected policy denial before proposing approval")
+	}
+	if !strings.Contains(err.Error(), "policy denied") {
+		t.Fatalf("expected policy denial error, got %v", err)
+	}
+	if pending := server.approvalMgr.ListPending(sess.ID); len(pending) != 0 {
+		t.Fatalf("expected no pending approvals when policy denies, got %d", len(pending))
+	}
+}
+
+func TestServerRequestApproval_EnforcesTrustLevelVisibilityBeforePropose(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier2")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	_, err = server.RequestApproval(context.Background(), tools.ToolCall{
+		ToolName:  "symbolic_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go_test_internal"},
+	})
+	if err == nil {
+		t.Fatal("expected trust-level visibility denial before proposing approval")
+	}
+	if !strings.Contains(err.Error(), "not exposed") {
+		t.Fatalf("expected trust-level visibility denial, got %v", err)
+	}
+	if pending := server.approvalMgr.ListPending(sess.ID); len(pending) != 0 {
+		t.Fatalf("expected no pending approvals when trust-level visibility denies, got %d", len(pending))
+	}
+}
+
+func TestServerRequestApproval_AllowsTier1SymbolicShellAndRequiresApproval(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier1")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	result, err := server.RequestApproval(context.Background(), tools.ToolCall{
+		ToolName:  "symbolic_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go_test_internal"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected request approval error: %v", err)
+	}
+	if result.Approved {
+		t.Fatal("expected symbolic_shell to require approval for tier1")
+	}
+	if result.Reason != "approval_required" {
+		t.Fatalf("expected approval_required reason, got %q", result.Reason)
+	}
+	if strings.TrimSpace(result.ApprovalID) == "" {
+		t.Fatal("expected approval id for pending symbolic_shell approval")
+	}
+	if pending := server.approvalMgr.ListPending(sess.ID); len(pending) != 1 {
+		t.Fatalf("expected one pending approval for tier1 symbolic_shell, got %d", len(pending))
+	}
+}
+
+func TestHandleApprovalByID_EnforcesTrustTierPolicyBeforeExecution(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	executed := false
+	server.toolExecutor.RegisterHandler("restricted_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		executed = true
+		return map[string]interface{}{"exit_code": 0}, nil
+	})
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier0")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	call := tools.ToolCall{
+		ToolName:  "restricted_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go version"},
+	}
+	approval, err := server.approvalMgr.Propose(sess.ID, call, tools.SideEffectExecute, nil, nil)
+	if err != nil {
+		t.Fatalf("propose approval: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
+	if decisionRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when trust-tier policy denies approved execution, got %d", decisionRec.Code)
+	}
+	if executed {
+		t.Fatal("expected approved call execution to be blocked by trust-tier policy")
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state after policy denial, got %s", updated.State)
+	}
+}
+
+func TestHandleApprovalByID_EnforcesTrustLevelVisibilityBeforeExecution(t *testing.T) {
+	server := newApprovalTestServer(t)
+	server.sessionMgr = session.NewManager(server.eventStore)
+
+	executed := false
+	server.toolExecutor.RegisterHandler("symbolic_shell", func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error) {
+		executed = true
+		return map[string]interface{}{"exit_code": 0}, nil
+	})
+
+	sess, err := server.sessionMgr.Create(context.Background(), "test-repo", "tier2")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	call := tools.ToolCall{
+		ToolName:  "symbolic_shell",
+		SessionID: sess.ID,
+		Input:     map[string]interface{}{"command": "go_test_internal"},
+	}
+	approval, err := server.approvalMgr.Propose(sess.ID, call, tools.SideEffectExecute, nil, nil)
+	if err != nil {
+		t.Fatalf("propose approval: %v", err)
+	}
+
+	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
+	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
+	decisionRec := httptest.NewRecorder()
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
+	if decisionRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when trust-level visibility denies approved execution, got %d", decisionRec.Code)
+	}
+	if executed {
+		t.Fatal("expected approved call execution to be blocked by trust-level visibility")
+	}
+
+	updated, ok := server.approvalMgr.Get(approval.ID)
+	if !ok {
+		t.Fatal("approval not found")
+	}
+	if updated.State != ApprovalStateCancelled {
+		t.Fatalf("expected cancelled state after trust-level visibility denial, got %s", updated.State)
+	}
+}
+
+func TestApprovalFaultScenarios_Bead_l3d_17_4(t *testing.T) {
+	t.Run("decide expired emits transition", TestApprovalManager_DecideExpiredEmitsTransitionCausality)
+	t.Run("mutation cancels approved action", TestHandleApprovalByID_ArgumentMutationCancelsApproval)
+	t.Run("execution failure cancels approval", TestHandleApprovalByID_ExecutionFailureCancelsApproval)
+}
+
+// TestApprovalExecutionContextStored_Bead_l3d_8_4 is the bead-tagged conformance entry
+// point for l3d.8.4 (log execution context and surface in approval flow).
+func TestApprovalExecutionContextStored_Bead_l3d_8_4(t *testing.T) {
+	t.Parallel()
+	t.Run("execution context stored on propose", TestApprovalPropose_StoresExecutionContext)
+	t.Run("nil execution context accepted", TestApprovalPropose_NilContextIsAccepted)
 }

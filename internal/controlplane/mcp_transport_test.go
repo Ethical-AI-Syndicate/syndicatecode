@@ -50,7 +50,7 @@ func TestHandleToolExecute_RemoteMCPCallWritesAuditMetadata(t *testing.T) {
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("expected approval execution success, got %d: %s", decisionRec.Code, decisionRec.Body.String())
 	}
@@ -113,7 +113,7 @@ func TestHandleSessionByID_FilteredEventsIncludeMCPRoutingTrace(t *testing.T) {
 	decisionBody := bytes.NewBufferString(`{"decision":"approve"}`)
 	decisionReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approval.ID, decisionBody)
 	decisionRec := httptest.NewRecorder()
-	server.handleApprovalByID(decisionRec, decisionReq)
+	server.handleApprovalByID(decisionRec, withOperatorRole(decisionReq))
 	if decisionRec.Code != http.StatusOK {
 		t.Fatalf("expected approval execution success, got %d: %s", decisionRec.Code, decisionRec.Body.String())
 	}

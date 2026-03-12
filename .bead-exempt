@@ -1,0 +1,14 @@
+# Commits exempt from bead-verify.
+# Each line is a full or prefix SHA of a commit that predates the bead-tag
+# convention for that commit type, or was created during tooling setup before
+# the convention was established for this branch.
+#
+# Format: at least 7 hex chars. Comments start with #. Blank lines ignored.
+
+# docs(specs): add gap implementation design for production audit findings
+# Created during brainstorming phase before implementation beads were assigned.
+1867089
+
+# docs(plans): add gap implementation plan for all 11 audit findings
+# Created during planning phase before implementation beads were assigned.
+e64f0a4

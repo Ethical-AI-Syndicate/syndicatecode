@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/audit"
+	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/requestmeta"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/session"
 	"gitlab.mikeholownych.com/ai-syndicate/syndicatecode/internal/state"
 )
@@ -99,6 +101,14 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		return nil, err
 	}
 
+	hasActiveTurn, activeTurnID, err := m.hasActiveMutableTurn(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if hasActiveTurn {
+		return nil, fmt.Errorf("%w: session %s already has active turn %s", ErrActiveMutableTurnConflict, sessionID, activeTurnID)
+	}
+
 	decision := m.policy.Apply("turn.message", "user_input", message, DestinationPersistence)
 	redactedMessage := decision.Content
 	now := time.Now()
@@ -135,8 +145,8 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 		ID:            uuid.New().String(),
 		SessionID:     sessionID,
 		TurnID:        turn.ID,
-		EventType:     "turn_started",
-		Actor:         "user",
+		EventType:     audit.EventTurnStarted,
+		Actor:         requestmeta.Actor(ctx),
 		Timestamp:     now,
 		PolicyVersion: "1.0.0",
 		Payload:       payload,
@@ -149,14 +159,100 @@ func (m *TurnManager) Create(ctx context.Context, sessionID, message string) (*T
 	return turn, nil
 }
 
+func (m *TurnManager) hasActiveMutableTurn(ctx context.Context, sessionID string) (bool, string, error) {
+	events, err := m.eventStore.QueryBySession(ctx, sessionID)
+	if err != nil {
+		return false, "", err
+	}
+
+	turnStateByID := make(map[string]TurnStatus)
+	turnOrder := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	for _, event := range events {
+		if event.TurnID == "" {
+			continue
+		}
+		if _, ok := seen[event.TurnID]; !ok {
+			turnOrder = append(turnOrder, event.TurnID)
+			seen[event.TurnID] = struct{}{}
+		}
+
+		switch event.EventType {
+		case audit.EventTurnStarted:
+			if !isTerminalTurnStatus(turnStateByID[event.TurnID]) {
+				turnStateByID[event.TurnID] = TurnStatusActive
+			}
+		case audit.EventTurnAwaitingApproval:
+			if !isTerminalTurnStatus(turnStateByID[event.TurnID]) {
+				turnStateByID[event.TurnID] = TurnStatusAwaitingApproval
+			}
+		case audit.EventTurnCompleted:
+			turnStateByID[event.TurnID] = TurnStatusCompleted
+		case audit.EventTurnFailed:
+			turnStateByID[event.TurnID] = TurnStatusFailed
+		case audit.EventTurnCancelled:
+			turnStateByID[event.TurnID] = TurnStatusCancelled
+		default:
+			status, ok, decodeErr := transitionStatusFromPayload(event.Payload)
+			if decodeErr != nil {
+				return false, "", decodeErr
+			}
+			if ok {
+				if isTerminalTurnStatus(turnStateByID[event.TurnID]) {
+					continue
+				}
+				turnStateByID[event.TurnID] = status
+			}
+		}
+	}
+
+	for _, turnID := range turnOrder {
+		status := turnStateByID[turnID]
+		if status == TurnStatusActive || status == TurnStatusAwaitingApproval {
+			return true, turnID, nil
+		}
+	}
+
+	return false, "", nil
+}
+
+func transitionStatusFromPayload(payload []byte) (TurnStatus, bool, error) {
+	if len(payload) == 0 {
+		return "", false, nil
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return "", false, fmt.Errorf("failed to decode turn transition payload: %w", err)
+	}
+
+	rawStatus, ok := body["next_state"]
+	if !ok {
+		return "", false, nil
+	}
+	status, ok := rawStatus.(string)
+	if !ok {
+		return "", false, nil
+	}
+
+	return TurnStatus(status), true, nil
+}
+
+func isTerminalTurnStatus(status TurnStatus) bool {
+	return status == TurnStatusCompleted || status == TurnStatusFailed || status == TurnStatusCancelled
+}
+
 func (m *TurnManager) Get(ctx context.Context, turnID string) (*Turn, error) {
-	events, err := m.eventStore.QueryAll(ctx)
+	events, err := m.eventStore.QueryByTurn(ctx, turnID)
 	if err != nil {
 		return nil, err
 	}
 
+	statusByID := deriveTurnStatuses(events)
+
 	for _, e := range events {
-		if e.TurnID == turnID && e.EventType == "turn_started" {
+		if e.EventType == audit.EventTurnStarted {
 			var payload struct {
 				Message string `json:"message"`
 			}
@@ -164,13 +260,25 @@ func (m *TurnManager) Get(ctx context.Context, turnID string) (*Turn, error) {
 				return nil, err
 			}
 
+			updatedAt := e.Timestamp
+			for _, later := range events {
+				if later.Timestamp.After(updatedAt) {
+					updatedAt = later.Timestamp
+				}
+			}
+
+			status := statusByID[turnID]
+			if status == "" {
+				status = TurnStatusActive
+			}
+
 			return &Turn{
 				ID:        turnID,
 				SessionID: e.SessionID,
 				Message:   payload.Message,
-				Status:    TurnStatusActive,
+				Status:    status,
 				CreatedAt: e.Timestamp,
-				UpdatedAt: e.Timestamp,
+				UpdatedAt: updatedAt,
 			}, nil
 		}
 	}
@@ -184,9 +292,11 @@ func (m *TurnManager) ListBySession(ctx context.Context, sessionID string) ([]*T
 		return nil, err
 	}
 
+	statusByID := deriveTurnStatuses(events)
+
 	turns := make(map[string]*Turn)
 	for _, e := range events {
-		if e.EventType == "turn_started" {
+		if e.EventType == audit.EventTurnStarted {
 			var payload struct {
 				Message string `json:"message"`
 			}
@@ -194,13 +304,28 @@ func (m *TurnManager) ListBySession(ctx context.Context, sessionID string) ([]*T
 				return nil, err
 			}
 
+			status := statusByID[e.TurnID]
+			if status == "" {
+				status = TurnStatusActive
+			}
+
 			turns[e.TurnID] = &Turn{
 				ID:        e.TurnID,
 				SessionID: sessionID,
 				Message:   payload.Message,
-				Status:    TurnStatusActive,
+				Status:    status,
 				CreatedAt: e.Timestamp,
 				UpdatedAt: e.Timestamp,
+			}
+			continue
+		}
+
+		if existing, ok := turns[e.TurnID]; ok {
+			if e.Timestamp.After(existing.UpdatedAt) {
+				existing.UpdatedAt = e.Timestamp
+			}
+			if status := statusByID[e.TurnID]; status != "" {
+				existing.Status = status
 			}
 		}
 	}
@@ -214,6 +339,31 @@ func (m *TurnManager) ListBySession(ctx context.Context, sessionID string) ([]*T
 }
 
 var ErrTurnNotFound = errors.New("turn not found")
+var ErrActiveMutableTurnConflict = errors.New("active mutable turn already exists")
+
+func deriveTurnStatuses(events []audit.Event) map[string]TurnStatus {
+	statuses := make(map[string]TurnStatus)
+	for _, event := range events {
+		if event.TurnID == "" {
+			continue
+		}
+		switch event.EventType {
+		case audit.EventTurnStarted:
+			if statuses[event.TurnID] == "" {
+				statuses[event.TurnID] = TurnStatusActive
+			}
+		case audit.EventTurnAwaitingApproval:
+			statuses[event.TurnID] = TurnStatusAwaitingApproval
+		case audit.EventTurnCompleted:
+			statuses[event.TurnID] = TurnStatusCompleted
+		case audit.EventTurnFailed:
+			statuses[event.TurnID] = TurnStatusFailed
+		case audit.EventTurnCancelled:
+			statuses[event.TurnID] = TurnStatusCancelled
+		}
+	}
+	return statuses
+}
 
 // ContextFragment represents a piece of context included in the prompt
 type ContextFragment struct {
@@ -281,6 +431,18 @@ func (a *ContextAssembler) AddFragment(fragment *ContextFragment) error {
 // Fragments returns all fragments
 func (a *ContextAssembler) Fragments() []*ContextFragment {
 	return a.fragments
+}
+
+// AssembleFromRanked uses BudgetAllocator to select fragments within category budgets.
+// Use this instead of AddFragment when ranked fragments are available.
+func (a *ContextAssembler) AssembleFromRanked(ranked []RankedFragment, budget CategoryBudget) []ContextFragment {
+	allocator := NewBudgetAllocator(budget)
+	allocated, _ := allocator.AllocateFragments(ranked)
+	a.fragments = make([]*ContextFragment, 0, len(allocated))
+	for i := range allocated {
+		a.fragments = append(a.fragments, &allocated[i])
+	}
+	return allocated
 }
 
 // BuildPrompt builds the final prompt from fragments
@@ -372,7 +534,7 @@ func (m *ContextManifest) Record(ctx context.Context, sessionID, turnID string, 
 			ID:            uuid.New().String(),
 			SessionID:     sessionID,
 			TurnID:        turnID,
-			EventType:     "context_fragment",
+			EventType:     audit.EventContextFragment,
 			Actor:         "system",
 			Timestamp:     now,
 			PolicyVersion: "1.0.0",
@@ -386,14 +548,14 @@ func (m *ContextManifest) Record(ctx context.Context, sessionID, turnID string, 
 }
 
 func (m *ContextManifest) Get(ctx context.Context, turnID string) ([]ContextFragment, error) {
-	events, err := m.eventStore.QueryAll(ctx)
+	events, err := m.eventStore.QueryByTurn(ctx, turnID)
 	if err != nil {
 		return nil, err
 	}
 
 	var fragments []ContextFragment
 	for _, e := range events {
-		if e.TurnID == turnID && e.EventType == "context_fragment" {
+		if e.EventType == audit.EventContextFragment {
 			var f ContextFragment
 			if err := json.Unmarshal(e.Payload, &f); err != nil {
 				return nil, err

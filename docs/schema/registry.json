@@ -1,0 +1,51 @@
+{
+  "schemas": [
+    {
+      "name": "session",
+      "version": 1,
+      "fields": [
+        {
+          "name": "repo_path",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "trust_tier",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "turn",
+      "version": 1,
+      "fields": [
+        {
+          "name": "message",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "turn_id",
+          "type": "string",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

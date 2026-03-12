@@ -15,10 +15,24 @@ var ErrExecutionTimeout = errors.New("execution timeout")
 
 type ToolHandler func(ctx context.Context, input map[string]interface{}) (map[string]interface{}, error)
 
+// ExecutionRecorder is an optional hook called before and after tool execution.
+// Wire a concrete implementation in the controlplane layer.
+type ExecutionRecorder interface {
+	BeforeExecute(ctx context.Context, call ToolCall, def ToolDefinition)
+	AfterExecute(ctx context.Context, call ToolCall, def ToolDefinition, result *ToolResult, err error, duration time.Duration)
+}
+
 type Executor struct {
 	registry *Registry
 	handlers map[string]ToolHandler
+	recorder ExecutionRecorder
 	mu       sync.RWMutex
+}
+
+func (e *Executor) SetRecorder(r ExecutionRecorder) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.recorder = r
 }
 
 func NewExecutor(reg *Registry, handlers map[string]ToolHandler) *Executor {
@@ -50,6 +64,10 @@ func (e *Executor) Execute(ctx context.Context, call ToolCall) (*ToolResult, err
 
 	start := time.Now()
 
+	if e.recorder != nil {
+		e.recorder.BeforeExecute(ctx, call, tool)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(tool.Limits.TimeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -58,21 +76,40 @@ func (e *Executor) Execute(ctx context.Context, call ToolCall) (*ToolResult, err
 	var execErr error
 
 	go func() {
-		output, execErr = e.executeTool(ctx, call.ToolName, call.Input)
+		input := make(map[string]interface{}, len(call.Input)+1)
+		for k, v := range call.Input {
+			input[k] = v
+		}
+		if _, exists := input["_session_id"]; !exists && call.SessionID != "" {
+			input["_session_id"] = call.SessionID
+		}
+
+		output, execErr = e.executeTool(ctx, call.ToolName, input)
 		close(done)
 	}()
 
+	var returnErr error
 	select {
 	case <-done:
 	case <-ctx.Done():
 		result.Timeout = true
 		result.Error = ErrExecutionTimeout.Error()
 		result.Duration = time.Since(start).Milliseconds()
-		return result, ErrExecutionTimeout
+		returnErr = ErrExecutionTimeout
+		if e.recorder != nil {
+			e.recorder.AfterExecute(ctx, call, tool, result, returnErr, time.Since(start))
+		}
+		return result, returnErr
 	}
 
 	if execErr != nil {
 		result.Error = execErr.Error()
+		result.Duration = time.Since(start).Milliseconds()
+		returnErr = execErr
+		if e.recorder != nil {
+			e.recorder.AfterExecute(ctx, call, tool, result, returnErr, time.Since(start))
+		}
+		return result, returnErr
 	} else {
 		result.Success = true
 		result.Output = output
@@ -81,11 +118,18 @@ func (e *Executor) Execute(ctx context.Context, call ToolCall) (*ToolResult, err
 			result.OutputTruncated = true
 			result.Error = ErrOutputTooLarge.Error()
 			result.Success = false
-			return result, ErrOutputTooLarge
+			returnErr = ErrOutputTooLarge
+			if e.recorder != nil {
+				e.recorder.AfterExecute(ctx, call, tool, result, returnErr, time.Since(start))
+			}
+			return result, returnErr
 		}
 	}
 
 	result.Duration = time.Since(start).Milliseconds()
+	if e.recorder != nil {
+		e.recorder.AfterExecute(ctx, call, tool, result, nil, time.Since(start))
+	}
 	return result, nil
 }
 

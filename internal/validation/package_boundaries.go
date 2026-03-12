@@ -31,17 +31,22 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/controlplane": {
 				Owner:            "controlplane",
 				Responsibilities: []string{"request orchestration", "session and turn coordination", "policy surface integration"},
-				AllowedImports:   []string{"internal/audit", "internal/context", "internal/mcp", "internal/patch", "internal/policy", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
+				AllowedImports:   []string{"internal/agent", "internal/audit", "internal/context", "internal/mcp", "internal/models", "internal/models/anthropic", "internal/models/openai", "internal/patch", "internal/policy", "internal/requestmeta", "internal/sandbox", "internal/secrets", "internal/session", "internal/state", "internal/tools", "internal/validation"},
 			},
 			"internal/session": {
 				Owner:            "state",
 				Responsibilities: []string{"session lifecycle"},
-				AllowedImports:   []string{"internal/audit", "internal/state"},
+				AllowedImports:   []string{"internal/audit", "internal/requestmeta", "internal/state"},
 			},
 			"internal/context": {
 				Owner:            "ai-systems",
 				Responsibilities: []string{"turn lifecycle", "context assembly", "token budgeting", "retrieval profile classification"},
-				AllowedImports:   []string{"internal/audit", "internal/secrets", "internal/session", "internal/state"},
+				AllowedImports:   []string{"internal/audit", "internal/requestmeta", "internal/secrets", "internal/session", "internal/state"},
+			},
+			"internal/agent": {
+				Owner:            "ai-systems",
+				Responsibilities: []string{"react loop", "model/tool orchestration", "reliability limits"},
+				AllowedImports:   []string{"internal/models", "internal/tools", "internal/trust"},
 			},
 			"internal/state": {
 				Owner:            "state",
@@ -58,6 +63,21 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 				Responsibilities: []string{"task-scoped git safety and provenance"},
 				AllowedImports:   []string{},
 			},
+			"internal/models": {
+				Owner:            "ai-systems",
+				Responsibilities: []string{"provider-agnostic model abstraction", "streaming event contracts"},
+				AllowedImports:   []string{},
+			},
+			"internal/models/anthropic": {
+				Owner:            "ai-systems",
+				Responsibilities: []string{"Anthropic SDK streaming provider implementation"},
+				AllowedImports:   []string{"internal/models"},
+			},
+			"internal/models/openai": {
+				Owner:            "ai-systems",
+				Responsibilities: []string{"OpenAI SDK streaming provider implementation"},
+				AllowedImports:   []string{"internal/models"},
+			},
 			"internal/mcp": {
 				Owner:            "integrations",
 				Responsibilities: []string{"MCP plugin loading and registry integration"},
@@ -73,6 +93,11 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 				Responsibilities: []string{"policy contracts and evaluation surface"},
 				AllowedImports:   []string{},
 			},
+			"internal/trust": {
+				Owner:            "governance",
+				Responsibilities: []string{"trust-tier policy resolution", "side-effect/approval rules"},
+				AllowedImports:   []string{"internal/tools"},
+			},
 			"internal/secrets": {
 				Owner:            "security",
 				Responsibilities: []string{"secret detection, classification, and redaction policy"},
@@ -86,11 +111,16 @@ func DefaultPackageBoundarySpec() BoundarySpec {
 			"internal/sandbox": {
 				Owner:            "runtime",
 				Responsibilities: []string{"isolation-level runners", "resource limits", "execution controls"},
-				AllowedImports:   []string{"internal/tools"},
+				AllowedImports:   []string{"internal/tools", "internal/trust"},
 			},
 			"internal/validation": {
 				Owner:            "architecture",
 				Responsibilities: []string{"architecture and boundary validation"},
+				AllowedImports:   []string{},
+			},
+			"internal/requestmeta": {
+				Owner:            "platform",
+				Responsibilities: []string{"request-scoped actor and role metadata"},
 				AllowedImports:   []string{},
 			},
 			"pkg/api": {
