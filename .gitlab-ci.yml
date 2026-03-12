@@ -8,7 +8,7 @@ stages:
   - evidence
 
 variables:
-  GO_VERSION: "1.21"
+  GO_VERSION: "1.25"
   GIT_DEPTH: "0"
 
 default:
