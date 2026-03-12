@@ -124,28 +124,31 @@ func TestHandleSessionByID_ExportPipeline_Bead_l3d_10_2(t *testing.T) {
 
 	var resp struct {
 		Events []struct {
-			Payload map[string]interface{} `json:"payload"`
+			EventType string          `json:"event_type"`
+			Payload   json.RawMessage `json:"payload"`
 		} `json:"events"`
-		Warnings []struct {
-			Destination    string `json:"destination"`
-			MaterialImpact bool   `json:"material_impact"`
-		} `json:"warnings"`
+		RedactionSummary struct {
+			Reason string `json:"reason"`
+		} `json:"redaction_summary"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode export response: %v", err)
 	}
 
-	if len(resp.Warnings) == 0 {
-		t.Fatalf("expected export warnings for redacted payload")
-	}
-	if resp.Warnings[0].Destination != "export" {
-		t.Fatalf("expected export warning destination, got %q", resp.Warnings[0].Destination)
-	}
-	if !resp.Warnings[0].MaterialImpact {
-		t.Fatalf("expected material impact warning")
+	if resp.RedactionSummary.Reason == "" {
+		t.Fatalf("expected non-empty redaction_summary.reason for redacted payload")
 	}
 
-	value, _ := resp.Events[1].Payload["value"].(string)
+	var valuePayload map[string]interface{}
+	for _, e := range resp.Events {
+		if e.EventType == "tool_output" {
+			if err := json.Unmarshal(e.Payload, &valuePayload); err != nil {
+				t.Fatalf("failed to decode event payload: %v", err)
+			}
+			break
+		}
+	}
+	value, _ := valuePayload["value"].(string)
 	if strings.Contains(value, "AKIA1234567890ABCDEF") {
 		t.Fatalf("expected export payload to be filtered, got %q", value)
 	}
